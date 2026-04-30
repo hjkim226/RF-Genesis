@@ -1,5 +1,5 @@
 
-
+import os
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -173,9 +173,32 @@ def save_video(radar_cfg_file, radar_frames_file, smpl_data_file, output_file):
 
     # Process the pointclouds
     pointclouds = []
+    radarllm_data = []
     for frame in radar_frames:
         pc = process_pc(pointcloud_cfg, frame)
         pointclouds.append(pc)
+        # RadarLLM 포맷 변환: [x,y,z,i,v,r] -> [x,y,z,r,v,i]
+        if pc.shape[0] > 0:
+            pc_6d = pc[:, [0, 1, 2, 5, 4, 3]].copy()
+
+            # intensity log scaling
+            pc_6d[:, 5] = np.log1p(pc_6d[:, 5] * 1e10)
+        else:
+            pc_6d = np.empty((0, 6))
+
+        radarllm_data.append(pc_6d)
+
+    output_dir = os.path.dirname(output_file)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # point cloud 저장
+    np.save(os.path.join(output_dir, "pointclouds.npy"),
+            np.array(pointclouds, dtype=object))
+
+    np.save(os.path.join(output_dir, "radarllm_6d.npy"),
+            np.array(radarllm_data, dtype=object))
+    print(f"\nSaved {len(pointclouds)} frames to pointclouds.npy and radarllm_6d.npy")
     
     # Write the video
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
