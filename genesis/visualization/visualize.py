@@ -152,8 +152,15 @@ def draw_combined(i,pointcloud_cfg,radar_frames,pointclouds,smpl_data):
 
     plt.tight_layout()
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    # 1. buffer_rgba()로 데이터를 가져옵니다. (RGBA 4개 채널)
+    data = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+    
+    # 2. reshape 시 마지막 숫자를 4로 설정합니다.
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+   
+    # 3. RGBA에서 RGB만 남기기 위해 마지막 채널을 잘라냅니다.
+    data = data[:, :, :3]
+    
     plt.close(fig) 
     return data
 
