@@ -56,9 +56,18 @@ class Radar:
         self.max_doppler = 3e8 / (4 * self.fc * 1e9 * (self.idle_time + self.ramp_end_time) * 1e-6 * self.num_tx)
        
         self._lambda = self.c0/self.fc
+        SENSOR_HEIGHT = 2.0          # 1.8m ~ 2.2m 중간값
+        PITCH_DEG     = -22.5        # -15° ~ -30° 중간값
 
+        # Pitch 회전 후 보어사이트 계산 (원래 -Z 방향을 pitch만큼 하향 회전)
+        pitch_rad = np.deg2rad(PITCH_DEG)
+        self.sensor_height = SENSOR_HEIGHT
+        self.boresight = torch.tensor([
+            0.0,
+            np.sin(pitch_rad),      # = -0.3827  (아래 방향)
+            -np.cos(pitch_rad)      # = -0.9239  (앞 방향)
+        ], dtype=torch.float32)
 
-    
     def waveform(self,t,phi=0): 
         
         fc = (self.fc * t + 0.5 * (self.slope * 1e6* 1e6) *  t * t )
