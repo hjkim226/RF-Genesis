@@ -82,7 +82,7 @@ def main():
         print(colored('[RFGen] Rendering the visualization.', 'green'))
         torch.set_default_device('cpu')  # To avoid OOM
         visualize.save_video(
-            "models/TI1843_config.json", 
+            "models/IWR6843AOP_config.json", 
             os.path.join(output_dir, 'radar_frames.npy'), 
             os.path.join(output_dir, 'obj_diff.npz'), 
             os.path.join(output_dir, 'output.mp4'))

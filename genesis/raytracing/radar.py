@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import json
 
-def FSPL(distance, frequency=77e9):
+def FSPL(distance, frequency=60e9):
     wavelength = 3e8 / frequency
     return (wavelength / (4 * 3.14159265358979323846 * distance)) ** 2
 
@@ -70,7 +70,7 @@ class Radar:
     def chirp(self,distance,intensity):
         t_sample = torch.arange(0,self.adc_samples,dtype=torch.float64)/(self.sample_rate*1e3) +self.adc_start_time*1e-6
         # loss = RF_path_loss_torch(tof).view(-1,1)
-        loss = FSPL(distance).view(-1,1)
+        loss = FSPL(distance, frequency= self.fc).view(-1,1)
         intensity = intensity.view(-1,1)
         tof = distance / self.c0
         
