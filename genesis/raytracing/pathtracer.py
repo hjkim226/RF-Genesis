@@ -93,7 +93,8 @@ def get_deafult_scene(res = 512):
     sensor = mi.load_dict({
             'type': 'perspective',
             'to_world': T.look_at(
-                            origin=(0, 1, 3),
+                            # 높이 2.0m
+                            origin=(0, 2.0, 3),           # Y: 1 → 2.0  (에어컨 장착 높이)
                             target=(0, 1, 0),
                             up=(0, 1, 0)
                         ),
@@ -137,7 +138,7 @@ def get_deafult_scene(res = 512):
                 'type': 'spot',
                 'cutoff_angle': 40,
                 'to_world': T.look_at(
-                                origin=(0, 0, 3),
+                                origin=(0, 2.0, 3),       # 센서와 동일 위치로 통일
                                 target=(0, 0, 0),
                                 up=(0, 1, 0)
                             ),
