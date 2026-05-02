@@ -91,29 +91,29 @@ def get_deafult_scene(res = 512):
         })
 
     sensor = mi.load_dict({
-            'type': 'perspective',
-            'to_world': T.look_at(
-                            # 높이 2.0m, -22.5° 하향 피치
-                            origin=(0, 2.0, 3),           # Y: 1 → 2.0  (에어컨 장착 높이)
-                            target=(0, 0.757, 0),         # Y: 2.0 - 3*tan(22.5°) = 0.757
-                            up=(0, 1, 0)
-                        ),
-            'fov': 60,
-            'film': {
-                'type': 'hdrfilm',
-                'width': res,
-                'height': res,
-                'rfilter': { 'type': 'gaussian' },
-                'sample_border': True,
-                'pixel_format': 'luminance',
-                'component_format': 'float32',
-            },
-            'sampler':{
-                'type': 'independent',
-                'sample_count': 1,
-                'seed':42
-            },
-        })
+        'type': 'perspective',
+        'to_world': T.look_at(
+            # 높이 2.0m, -22.5° 하향 피치
+            origin=(0, 2.0, 3),           # Y: 1 → 2.0  (에어컨 장착 높이)
+            target=(0, 0.757, 0),         # Y: 2.0 - 3*tan(22.5°) = 0.757
+            up=(0, 1, 0)
+        ),
+        'fov': 130,                       # 60 → 130  (IWR6843AOP Wide FOV)
+        'film': {
+            'type': 'hdrfilm',
+            'width': res,
+            'height': res,
+            'rfilter': { 'type': 'gaussian' },
+            'sample_border': True,
+            'pixel_format': 'luminance',
+            'component_format': 'float32',
+        },
+        'sampler':{
+            'type': 'independent',
+            'sample_count': 1,
+            'seed':42
+        },
+    })
 
 
     default_scene ={
@@ -134,14 +134,14 @@ def get_deafult_scene(res = 512):
                 },
             },
 
-            'tx':{
+            'tx': {
                 'type': 'spot',
-                'cutoff_angle': 40,
+                'cutoff_angle': 65,           # 40 → 65  (FOV 절반각)
                 'to_world': T.look_at(
-                                origin=(0, 2.0, 3),       # 센서와 동일 위치로 통일
-                                target=(0, 0.757, 0),
-                                up=(0, 1, 0)
-                            ),
+                    origin=(0, 2.0, 3),       # 센서와 동일 위치로 통일
+                    target=(0, 0.757, 0),
+                    up=(0, 1, 0)
+                ),
                 'intensity': 1000.0,
             }
 

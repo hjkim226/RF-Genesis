@@ -17,7 +17,7 @@ def calculate_environment_points(environment_pir):
 
     distance = environment_pir[:, :, 0] * 5 + 5  # [H, W]
 
-    fov_rad = math.radians(60)
+    fov_rad = math.radians(130)    # IWR6843AOP FOV에 맞게 수정
     fx = W / (2 * math.tan(fov_rad / 2))
     fy = fx
     cx = W / 2

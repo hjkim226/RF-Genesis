@@ -56,6 +56,8 @@ class Radar:
         self.max_doppler = 3e8 / (4 * self.fc * 1e9 * (self.idle_time + self.ramp_end_time) * 1e-6 * self.num_tx)
        
         self._lambda = self.c0/self.fc
+        self.fov_half_rad = np.deg2rad(65.0)   # IWR6843AOP: ±65° = 130° FOV
+
         SENSOR_HEIGHT = 2.0          # 1.8m ~ 2.2m 중간값
         PITCH_DEG     = -22.5        # -15° ~ -30° 중간값
 
@@ -67,6 +69,31 @@ class Radar:
             np.sin(pitch_rad),      # = -0.3827  (아래 방향)
             -np.cos(pitch_rad)      # = -0.9239  (앞 방향)
         ], dtype=torch.float32)
+
+    def antenna_gain(self, sensor_pos, point_pos):
+        """
+        IWR6843AOP Wide-FOV 게인 패턴 A(α, γ).
+        sensor_pos : (3,)  텐서 — 센서 위치
+        point_pos  : (N,3) 텐서 — 반사점들
+        returns    : (N,)  게인 값 [0, 1]
+        """
+        # 센서에서 각 반사점으로의 방향 벡터
+        direction = point_pos - sensor_pos.unsqueeze(0)   # (N, 3)
+        dist = torch.norm(direction, dim=1, keepdim=True).clamp(min=1e-6)
+        direction = direction / dist                       # 단위 벡터
+
+        # 센서 보는 방향: -Z축 (pathtracer 좌표계와 동일)
+        boresight = self.boresight.to(direction.device)
+
+        # 보어사이트와의 각도
+        cos_theta = (direction @ boresight).clamp(-1.0, 1.0)
+        theta = torch.acos(cos_theta)                     # (N,)
+
+        # FOV 밖이면 gain = 0, 안이면 cosine rolloff
+        mask = theta <= self.fov_half_rad
+        gain = torch.cos(theta / self.fov_half_rad * (np.pi / 2))
+        gain = torch.where(mask, gain, torch.zeros_like(gain))
+        return gain.clamp(0.0, 1.0)
 
     def waveform(self,t,phi=0): 
         
@@ -104,19 +131,21 @@ class Radar:
         return frame
     
 
-    def frameMIMO(self,interpolator,t0=0, n_ray = 1):
-        frame = torch.zeros((self.num_tx, self.num_rx, self.chirp_per_frame, self.adc_samples),dtype = torch.complex128)
-        for chirp_id in range(self.chirp_per_frame): 
-            
-            # it is inefficient to calculate the location for every sample point, so we do that for every chirp
-            # this is a tradeoff between accuracy and computation
-            
-            time_in_frame = chirp_id / self.chirp_per_frame  / self.frame_per_second                 
-            intensity,loc = interpolator(t0+time_in_frame) # loc is a set of reflection points (N,3)
+    def frameMIMO(self, interpolator, t0=0, n_ray=1):
+        frame = torch.zeros((self.num_tx, self.num_rx, self.chirp_per_frame, self.adc_samples), dtype=torch.complex128)
+        for chirp_id in range(self.chirp_per_frame):
+            time_in_frame = chirp_id / self.chirp_per_frame / self.frame_per_second
+            intensity, loc = interpolator(t0 + time_in_frame)
+        
             for tx_id in range(self.num_tx):
                 for rx_id in range(self.num_rx):
                     tx_pos = self.tx_pos[tx_id].unsqueeze(0)  # Convert shape from (3,) to (1, 3)
                     rx_pos = self.rx_pos[rx_id].unsqueeze(0)  # Convert shape from (3,) to (1, 3)
                     tof = torch.cdist(loc,tx_pos)+ torch.cdist(loc,rx_pos)    # Tx - Surface - Rx
-                    frame[tx_id,rx_id,chirp_id,:] = self.chirp(tof,intensity)
+
+                    # IWR6843AOP 안테나 게인 패턴 적용
+                    gain = self.antenna_gain(self.tx_pos[tx_id], loc)   # (N,)
+                    weighted_intensity = intensity * gain                # (N,)
+
+                    frame[tx_id, rx_id, chirp_id, :] = self.chirp(tof, weighted_intensity)
         return frame
