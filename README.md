@@ -66,6 +66,11 @@ Run a simple example.
 python run.py -o "a person walking back and forth" -e "a living room" -n "hello_rfgen"
 ```
 
+Render the same motion pipeline with the infant SMIL body model.
+```
+python run.py -o "a baby crawling forward" -e "a living room" -n "hello_smil" --body-model smil
+```
+
 Optional Command:
 
 Skiping visualization rendering
@@ -75,6 +80,11 @@ Skiping visualization rendering
 Skiping environmental diffusion
 ```
 --no-environment 
+```
+Choose the body mesh model
+```
+--body-model smpl   # default adult SMPL
+--body-model smil   # infant SMIL, expects models/smpl_models/smil_web.pkl or SMIL_MODEL_PATH
 ```
 
 ## RFLoRA
