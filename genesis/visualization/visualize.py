@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from genesis.raytracing.radar import Radar 
 from genesis.visualization.pointcloud import PointCloudProcessCFG, frame2pointcloud,rangeFFT,dopplerFFT,process_pc
-from smplpytorch.pytorch.smpl_layer import SMPL_Layer
+from genesis.raytracing import smpl
 
 
 
@@ -89,10 +89,10 @@ def draw_skeleton(joints3D, kintree_table, ax=None, with_numbers=False):
 
 
 
-def draw_smpl_on_axis(pose,shape,translation=None, ax=None):
+def draw_smpl_on_axis(pose, shape, translation=None, ax=None, body_model="smpl", gender="male"):
     pose = torch.tensor(pose).unsqueeze(0)
     shape = torch.tensor(shape).unsqueeze(0)
-    smpl_layer = SMPL_Layer(center_idx=0,gender='male',model_root='models/smpl_models')
+    smpl_layer = smpl.get_smpl_layer(body_model=body_model, gender=gender, device=pose.device)
     verts, Jtr = smpl_layer(pose, th_betas=shape)
 
     display_smpl(
@@ -134,12 +134,14 @@ def draw_combined(i,pointcloud_cfg,radar_frames,pointclouds,smpl_data):
     poses = smpl_data["pose"]
     shape = smpl_data['shape']
     root_translation = smpl_data['root_translation']
+    body_model = str(smpl_data['body_model']) if 'body_model' in smpl_data else 'smpl'
+    gender = str(smpl_data['gender']) if 'gender' in smpl_data else 'male'
 
 
     fig= plt.figure(figsize=(12, 6))
 
     ax1 = fig.add_subplot(131, projection='3d')
-    draw_smpl_on_axis(poses[smpl_frame_id],shape,root_translation[smpl_frame_id],ax1)
+    draw_smpl_on_axis(poses[smpl_frame_id],shape,root_translation[smpl_frame_id],ax1,body_model,gender)
 
 
     ax2 = fig.add_subplot(132, projection='3d')

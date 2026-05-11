@@ -24,15 +24,17 @@ def get_args():
                         help='Disable visualization step (default: enabled)')
     parser.add_argument('--no-environment',  dest='skip_environment', default= False,
                         help='Disable environment PIR generation (default: enabled)')
+    parser.add_argument('--body-model', choices=['smpl', 'smil'], default='smpl',
+                        help='Body mesh model to render: adult SMPL or infant SMIL (default: smpl)')
 
 
     args = parser.parse_args()
 
-    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment
+    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model
 
 
 def main():
-    obj_prompt, env_prompt, name, skip_visualize, skip_environment = get_args()
+    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model = get_args()
     # obj_prompt, env_prompt, name = "a person walking back and forth", "", "test"
 
     
@@ -44,9 +46,20 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
 
-    if not os.path.exists(os.path.join(output_dir, 'obj_diff.npz')):
+    obj_diff_file = os.path.join(output_dir, 'obj_diff.npz')
+    regenerate_body = not os.path.exists(obj_diff_file)
+    retarget_body = False
+    if not regenerate_body:
+        existing_body = np.load(obj_diff_file, allow_pickle=True)
+        existing_body_model = str(existing_body['body_model']) if 'body_model' in existing_body else 'smpl'
+        retarget_body = existing_body_model != body_model
+
+    if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
-        object_diff.generate(obj_prompt, output_dir)
+        object_diff.generate(obj_prompt, output_dir, body_model=body_model)
+    elif retarget_body:
+        print(colored('[RFGen] Step 1/4: Retargeting existing body motion to {}: '.format(body_model.upper()), 'green'))
+        object_diff.retarget_body_model(output_dir, body_model=body_model)
     else:
         print(colored('[RFGen] Step 1/4: Already done, existing body motion file, skiping this step.', 'green'))
 
@@ -55,13 +68,6 @@ def main():
     print(colored('[RFGen] Step 2/4: Rendering the human body PIRs: ', 'green'))
     body_pir, body_aux = pathtracer.trace(os.path.join("../",output_dir, 'obj_diff.npz'))
     os.chdir("..")
-    
-    
-    # print(colored('[RFGen] Step 3/4: Generating the environmental PIRs: ', 'green'))
-    # print(colored('[RFGen] Step 3/4: [Jan 2024] RFLoRA and Environment Diffusion is Temporarily Disabled.', 'red'))ç
-    # print(colored('                  We will update tuned RFLoRA soon.', 'red'))
-    # print(colored('                  RFGen will continue without RFLoRA.', 'green'))
-
 
     if not skip_environment:
         print(colored('[RFGen] Step 3/4: Generating the environmental PIRs: ', 'green'))
@@ -98,6 +104,3 @@ def main():
     exit(0)
 if __name__ == '__main__':
     main()
-
-
-    
