@@ -34,9 +34,9 @@ def save_body_motion(out_dir, pose, root_translation, body_model="smpl", gender=
     )
 
 
-def retarget_body_model(out_dir, body_model="smpl"):
+def retarget_body_model(out_dir, body_model="smpl", gender=None):
     data = np.load(out_dir + '/obj_diff.npz', allow_pickle=True)
-    gender = str(data['gender']) if 'gender' in data else 'male'
+    gender = gender or (str(data['gender']) if 'gender' in data else 'male')
     save_body_motion(out_dir, data['pose'], data['root_translation'], body_model, gender)
 
 
@@ -53,7 +53,7 @@ def euler_to_axis_angle(euler_angles):
 
     return axis_angle_params
 
-def process(out_dir, body_model="smpl"):
+def process(out_dir, body_model="smpl", gender="male"):
     filename = out_dir+"/obj_diff_raw.npy"
     print(colored("---[RFGen.ObjDiff]:Runing SMPLify, it may take a few minutes.---", 'yellow'))
     print(colored("---[RFGen.ObjDiff]:This may be optimized in future updates.---", 'yellow'))
@@ -83,11 +83,11 @@ def process(out_dir, body_model="smpl"):
     final_thetas = euler_to_axis_angle(thetas_vec3)
     smpl_params = final_thetas.reshape(final_thetas.shape[0], -1)
     
-    save_body_motion(out_dir, smpl_params, root_translation, body_model, gender="male")
+    save_body_motion(out_dir, smpl_params, root_translation, body_model, gender=gender)
     
 
 
-def generate(prompt, out_dir, body_model="smpl"):
+def generate(prompt, out_dir, body_model="smpl", gender="male"):
 
     os.chdir("ext/mdm/")
     subprocess.run(
@@ -96,5 +96,5 @@ def generate(prompt, out_dir, body_model="smpl"):
          '--output_dir', "../../"+out_dir, 
          '--num_samples', '1', '--num_repetitions', '1'])
     os.chdir("../..")
-    process(out_dir, body_model=body_model)
+    process(out_dir, body_model=body_model, gender=gender)
     

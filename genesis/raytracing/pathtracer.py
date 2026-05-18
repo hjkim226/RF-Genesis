@@ -2,6 +2,7 @@ import drjit as dr
 import mitsuba as mi
 from mitsuba.scalar_rgb import Transform4f as T
 import numpy as np
+from pathlib import Path
 from . import smpl
 import torch
 from tqdm import tqdm
@@ -9,10 +10,13 @@ mi.set_variant('cuda_ad_rgb')
 torch.set_default_device('cuda')
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 class RayTracer:
     def __init__(self, body_model="smpl", gender="male") -> None:
         self.PIR_resolution = 128
-        self.scene = mi.load_dict(get_deafult_scene(res = self.PIR_resolution))
+        self.scene = mi.load_dict(get_deafult_scene(res=self.PIR_resolution, body_model=body_model, gender=gender))
         self.params_scene = mi.traverse(self.scene)
         self.body = smpl.get_smpl_layer(body_model=body_model, gender=gender, device="cuda")
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -86,7 +90,13 @@ class RayTracer:
     
 
 
-def get_deafult_scene(res = 512):
+def _resolve_body_mesh(body_model, gender):
+    if body_model == "smpl" and gender == "female":
+        return REPO_ROOT / "models" / "female.ply"
+    return REPO_ROOT / "models" / "male.ply"
+
+
+def get_deafult_scene(res=512, body_model="smpl", gender="male"):
     integrator = mi.load_dict({
         'type': 'direct',
         })
@@ -128,7 +138,7 @@ def get_deafult_scene(res = 512):
             },
             'smpl':{
                 'type': 'ply',
-                'filename': '../models/male.ply',
+                'filename': str(_resolve_body_mesh(body_model, gender)),
                 "mybsdf": {
                     "type": "ref",
                     "id": "while"

@@ -26,15 +26,17 @@ def get_args():
                         help='Disable environment PIR generation (default: enabled)')
     parser.add_argument('--body-model', choices=['smpl', 'smil'], default='smpl',
                         help='Body mesh model to render: adult SMPL or infant SMIL (default: smpl)')
+    parser.add_argument('--gender', choices=['male', 'female'], default='male',
+                        help='SMPL gender to render when using --body-model smpl (default: male)')
 
 
     args = parser.parse_args()
 
-    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model
+    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model, args.gender
 
 
 def main():
-    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model = get_args()
+    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model, gender = get_args()
     # obj_prompt, env_prompt, name = "a person walking back and forth", "", "test"
 
     
@@ -52,14 +54,15 @@ def main():
     if not regenerate_body:
         existing_body = np.load(obj_diff_file, allow_pickle=True)
         existing_body_model = str(existing_body['body_model']) if 'body_model' in existing_body else 'smpl'
-        retarget_body = existing_body_model != body_model
+        existing_gender = str(existing_body['gender']) if 'gender' in existing_body else 'male'
+        retarget_body = existing_body_model != body_model or existing_gender != gender
 
     if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
-        object_diff.generate(obj_prompt, output_dir, body_model=body_model)
+        object_diff.generate(obj_prompt, output_dir, body_model=body_model, gender=gender)
     elif retarget_body:
-        print(colored('[RFGen] Step 1/4: Retargeting existing body motion to {}: '.format(body_model.upper()), 'green'))
-        object_diff.retarget_body_model(output_dir, body_model=body_model)
+        print(colored('[RFGen] Step 1/4: Retargeting existing body motion to {} {}: '.format(gender, body_model.upper()), 'green'))
+        object_diff.retarget_body_model(output_dir, body_model=body_model, gender=gender)
     else:
         print(colored('[RFGen] Step 1/4: Already done, existing body motion file, skiping this step.', 'green'))
 
