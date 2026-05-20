@@ -73,9 +73,12 @@ def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, r
             frame1[zero_depth_frame1] = frame2[zero_depth_frame1] # replace zero depth pixels with the other frame
             frame2[zero_depth_frame2] = frame1[zero_depth_frame2]
 
-            pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat] # replace zero depth pixels with the other frame
-            pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
-
+            if pointcloud1.shape[0] == 3:
+                pointcloud1[:, zero_depth_frame1_flat] = pointcloud2[:, zero_depth_frame1_flat]
+                pointcloud2[:, zero_depth_frame2_flat] = pointcloud1[:, zero_depth_frame2_flat]
+            else:
+                pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat]
+                pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
 
             interpolated_frame = frame1 * (1 - t) + frame2 * t
             interpolated_pointcloud = pointcloud1 * (1 - t) + pointcloud2 * t
@@ -87,12 +90,18 @@ def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, r
             
             mask = (depth > 0.1) & (intensity > 0.1)
 
+            if interpolated_pointcloud.shape[0] == 3:
+                filtered_points = interpolated_pointcloud[:, mask].T
+            else:
+                filtered_points = interpolated_pointcloud[mask]
+
             if environment_pir != None:
                 combined_intensity = torch.cat((environment_intensity, intensity[mask]), dim=0)
-                combined_pointcloud = torch.cat((environment_points, interpolated_pointcloud[mask]), dim=0)
+                combined_pointcloud = torch.cat((environment_points, filtered_points), dim=0)
             else:
                 combined_intensity = intensity[mask]
-                combined_pointcloud = interpolated_pointcloud[mask]
+                combined_pointcloud = filtered_points
+
             # return flatten_pir[:,1], interpolated_pointcloud[mask]
             return combined_intensity, combined_pointcloud
         

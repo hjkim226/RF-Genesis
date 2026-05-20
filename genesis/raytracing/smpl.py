@@ -16,6 +16,8 @@ torch.set_default_device('cuda')
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SMPL_ROOT = REPO_ROOT / "models" / "smpl_models"
 DEFAULT_SMIL_MODEL = DEFAULT_SMPL_ROOT / "smil_web.pkl"
+DEFAULT_SMAL_ROOT = DEFAULT_SMPL_ROOT
+SMAL_BODY_MODELS = {"cat": 0, "dog": 1}
 
 
 def _install_chumpy_pickle_stubs():
@@ -92,6 +94,72 @@ def _resolve_smpl_model(gender, model_root):
     return root / filenames.get(gender, filenames["male"])
 
 
+def _resolve_smal_root():
+    return Path(os.environ.get("SMAL_MODEL_ROOT", DEFAULT_SMAL_ROOT))
+
+
+def _resolve_smal_model():
+    smal_root = _resolve_smal_root()
+    return Path(os.environ.get("SMAL_MODEL_PATH", smal_root / "smal_CVPR2017.pkl"))
+
+
+def _resolve_smal_data():
+    smal_root = _resolve_smal_root()
+    return Path(os.environ.get("SMAL_DATA_PATH", smal_root / "smal_CVPR2017_data.pkl"))
+
+
+def _load_smal_shape(body_model):
+    with open(_resolve_smal_data(), "rb") as fp:
+        data = pickle.load(fp, encoding="latin1")
+    return np.asarray(data["cluster_means"][SMAL_BODY_MODELS[body_model]], dtype=np.float32)
+
+
+def _write_ply(filename, vertices, faces):
+    filename = Path(filename)
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    with open(filename, "w") as fp:
+        fp.write("ply\n")
+        fp.write("format ascii 1.0\n")
+        fp.write(f"element vertex {vertices.shape[0]}\n")
+        fp.write("property float x\n")
+        fp.write("property float y\n")
+        fp.write("property float z\n")
+        fp.write(f"element face {faces.shape[0]}\n")
+        fp.write("property list uchar int vertex_indices\n")
+        fp.write("end_header\n")
+        for vertex in vertices:
+            fp.write(f"{vertex[0]} {vertex[1]} {vertex[2]}\n")
+        for face in faces:
+            fp.write(f"3 {int(face[0])} {int(face[1])} {int(face[2])}\n")
+
+
+def _smal_vertices_to_rf(vertices):
+    return np.stack([vertices[:, 0], vertices[:, 2], vertices[:, 1]], axis=1)
+
+
+def ensure_body_mesh_file(body_model="smpl", gender="male"):
+    if body_model == "smpl" and gender == "female":
+        return REPO_ROOT / "models" / "female.ply"
+    if body_model in ("smpl", "smil"):
+        return REPO_ROOT / "models" / "male.ply"
+    if body_model not in SMAL_BODY_MODELS:
+        raise ValueError(f"Unknown body_model '{body_model}'. Expected 'smpl', 'smil', 'dog', or 'cat'.")
+
+    mesh_path = REPO_ROOT / "models" / f"smal_{body_model}.ply"
+    if mesh_path.exists():
+        return mesh_path
+
+    model = _load_pickle(_resolve_smal_model())
+    v_template = _as_numpy(model["v_template"]).astype(np.float32)
+    shapedirs = _as_numpy(model["shapedirs"]).astype(np.float32)
+    faces = _as_numpy(model["f"]).astype(np.int64)
+    betas = _load_smal_shape(body_model)
+    vertices = v_template + np.einsum("l,vkl->vk", betas, shapedirs)
+    vertices = _smal_vertices_to_rf(vertices)
+    _write_ply(mesh_path, vertices, faces)
+    return mesh_path
+
+
 def _batch_rodrigues(axis_angles):
     batch_size = axis_angles.shape[0]
     device = axis_angles.device
@@ -129,7 +197,7 @@ def _make_transform(rotation, translation):
 
 
 class BodyModelLayer(torch.nn.Module):
-    def __init__(self, model_path, center_idx=0):
+    def __init__(self, model_path, center_idx=0, vertex_transform=None):
         super().__init__()
         model = _load_pickle(model_path)
 
@@ -147,6 +215,7 @@ class BodyModelLayer(torch.nn.Module):
             parents.append(id_to_col[int(kintree_table[0, i])])
 
         self.center_idx = center_idx
+        self.vertex_transform = vertex_transform
         self.num_betas = shapedirs.shape[-1]
         self.num_joints = kintree_table.shape[1]
         self.register_buffer("v_template", torch.tensor(v_template))
@@ -225,20 +294,28 @@ class BodyModelLayer(torch.nn.Module):
             verts = verts - center
             jtr = jtr - center
 
+        if self.vertex_transform == "smal_to_rf":
+            verts = torch.stack([verts[:, :, 0], verts[:, :, 2], verts[:, :, 1]], dim=2)
+            jtr = torch.stack([jtr[:, :, 0], jtr[:, :, 2], jtr[:, :, 1]], dim=2)
+
         return verts, jtr
 
 
 def get_smpl_layer(body_model="smpl", gender="male", device="cuda"):
+    vertex_transform = None
     if body_model == "smil":
         model_root = Path(os.environ.get("SMPL_MODEL_ROOT", DEFAULT_SMPL_ROOT))
         model_path = Path(os.environ.get("SMIL_MODEL_PATH", model_root / "smil_web.pkl"))
     elif body_model == "smpl":
         model_root = Path(os.environ.get("SMPL_MODEL_ROOT", DEFAULT_SMPL_ROOT))
         model_path = _resolve_smpl_model(gender, model_root)
+    elif body_model in SMAL_BODY_MODELS:
+        model_path = _resolve_smal_model()
+        vertex_transform = "smal_to_rf"
     else:
-        raise ValueError(f"Unknown body_model '{body_model}'. Expected 'smpl' or 'smil'.")
+        raise ValueError(f"Unknown body_model '{body_model}'. Expected 'smpl', 'smil', 'dog', or 'cat'.")
 
-    return BodyModelLayer(model_path, center_idx=0).to(device)
+    return BodyModelLayer(model_path, center_idx=0, vertex_transform=vertex_transform).to(device)
 
 
 def apply_translation(vertices, translation_matrix):

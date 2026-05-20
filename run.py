@@ -24,8 +24,8 @@ def get_args():
                         help='Disable visualization step (default: enabled)')
     parser.add_argument('--no-environment',  dest='skip_environment', default= False,
                         help='Disable environment PIR generation (default: enabled)')
-    parser.add_argument('--body-model', choices=['smpl', 'smil'], default='smpl',
-                        help='Body mesh model to render: adult SMPL or infant SMIL (default: smpl)')
+    parser.add_argument('--body-model', choices=['smpl', 'smil', 'dog', 'cat'], default='smpl',
+                        help='Body mesh model to render: adult SMPL, infant SMIL, or SMAL dog/cat (default: smpl)')
     parser.add_argument('--gender', choices=['male', 'female'], default='male',
                         help='SMPL gender to render when using --body-model smpl (default: male)')
 
@@ -55,7 +55,7 @@ def main():
         existing_body = np.load(obj_diff_file, allow_pickle=True)
         existing_body_model = str(existing_body['body_model']) if 'body_model' in existing_body else 'smpl'
         existing_gender = str(existing_body['gender']) if 'gender' in existing_body else 'male'
-        retarget_body = existing_body_model != body_model or existing_gender != gender
+        retarget_body = existing_body_model != body_model or (body_model == 'smpl' and existing_gender != gender)
 
     if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
