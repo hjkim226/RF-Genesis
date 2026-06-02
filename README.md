@@ -107,11 +107,51 @@ Choose the SMPL gender
 
 SMAL pet support expects `models/smpl_models/smal_CVPR2017.pkl` and
 `models/smpl_models/smal_CVPR2017_data.pkl`. You can override those defaults
-with `SMAL_MODEL_ROOT`, `SMAL_MODEL_PATH`, and `SMAL_DATA_PATH`. It uses the
-family cluster means from `smal_CVPR2017_data.pkl` (`cat` = felidae cluster 0,
-`dog` = canidae cluster 1). The current motion generator remains human/SMPL-based,
-so dog/cat rendering preserves the generated root trajectory and renders a neutral
-SMAL pose rather than a quadruped gait.
+with `SMAL_MODEL_ROOT`, `SMAL_MODEL_PATH`, and `SMAL_DATA_PATH`.
+
+**Domain Extensions (SMAL + SMIL)**: The pipeline now includes proper
+domain-specific motion retargeting and radar simulation adaptations for
+quadrupeds (dogs/cats via SMAL) and infants (via SMIL). When using
+`--body-model dog|cat|smil`, the system automatically applies:
+
+- Quadruped-aware retargeting (limb scaling, ground contact, CoM adjustment, gait cycles)
+- Infant-specific priors (supine bias, asymmetric spontaneous movements)
+- Micro-motion injection (tail wag, breathing, fidgeting, ear twitch)
+- Domain-tuned radar parameters (RCS scaling, material reflectance tints for fur/skin, micro-Doppler velocity jitter)
+
+Example (now produces real trotting gaits + tail motion instead of neutral pose):
+```
+python run.py -o "a dog trotting in a circle, tail wagging" -e "a living room" \
+  -n dog_trot_real --body-model dog
+python run.py -o "an infant lying supine kicking legs and turning head" \
+  -e "a nursery" -n infant_gma --body-model smil
+```
+
+Use `--no-micro-motions` to disable the micro-motion layer for ablation studies.
+See `genesis/domain/` for the full registry of per-domain radar and motion profiles.
+
+## Pipeline Overview (SMPL / SMIL / SMAL)
+
+```
+Text Prompt
+        │
+        ▼
+  Domain Retargeting + Micro-Motions
+  (quadruped gait / infant supine + tail/breathing/fidget)
+        │
+        ▼
+  Body Mesh (SMPL / SMIL / SMAL) ──► Mitsuba Ray Tracer
+        │                              (domain reflectance tint)
+        ▼
+  PIRs + Real Velocity Field
+        │
+        ▼
+  Radar Signal Gen (RCS scale + μ-Doppler jitter)
+        │
+        ▼
+  Raw MIMO Frames + 6D Point Clouds
+```
+
 
 ## RFLoRA
 
