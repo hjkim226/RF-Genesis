@@ -25,6 +25,7 @@ def display_smpl(
         ax=None,
         batch_idx=0,
         translation=None,
+        title='SMPL model',
         ):
     """
     Displays mesh batch_idx in batch of model_info, model_info as returned by
@@ -58,7 +59,7 @@ def display_smpl(
     ax.set_zlim(-1, 3)
     ax.view_init(azim=-90, elev=100)
     ax.view_init(azim=30, elev=30, roll = 105)
-    ax.set_title('SMPL model', fontsize=20)
+    ax.set_title(title, fontsize=20)
     # fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     return ax
 
@@ -70,23 +71,29 @@ def draw_skeleton(joints3D, kintree_table, ax=None, with_numbers=False):
     else:
         ax = ax
 
-    colors = []
     left_right_mid = ['r', 'g', 'b']
     kintree_colors = [2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 0, 1, 0, 1, 0, 1]
-    for c in kintree_colors:
-        colors += left_right_mid[c]
-    # For each 24 joint
     for i in range(1, kintree_table.shape[1]):
-        j1 = kintree_table[0][i]
-        j2 = kintree_table[1][i]
+        j1 = int(kintree_table[0][i])
+        j2 = int(kintree_table[1][i])
+        color_idx = kintree_colors[(i - 1) % len(kintree_colors)]
         ax.plot([joints3D[j1, 0], joints3D[j2, 0]],
                 [joints3D[j1, 1], joints3D[j2, 1]],
                 [joints3D[j1, 2], joints3D[j2, 2]],
-                color=colors[i], linestyle='-', linewidth=2, marker='o', markersize=5)
+                color=left_right_mid[color_idx], linestyle='-', linewidth=2, marker='o', markersize=5)
         if with_numbers:
             ax.text(joints3D[j2, 0], joints3D[j2, 1], joints3D[j2, 2], j2)
     return ax
 
+
+
+def _display_translation(translation, body_model):
+    if translation is None:
+        return None
+    translation = np.array(translation, dtype=np.float32).copy()
+    if body_model in smpl.SMAL_BODY_MODELS:
+        translation[1] = max(translation[1] - 1.0, 0.0)
+    return translation
 
 
 def draw_smpl_on_axis(pose, shape, translation=None, ax=None, body_model="smpl", gender="male"):
@@ -94,13 +101,15 @@ def draw_smpl_on_axis(pose, shape, translation=None, ax=None, body_model="smpl",
     shape = torch.tensor(shape).unsqueeze(0)
     smpl_layer = smpl.get_smpl_layer(body_model=body_model, gender=gender, device=pose.device)
     verts, Jtr = smpl_layer(pose, th_betas=shape)
+    title = f"SMAL {body_model} model" if body_model in smpl.SMAL_BODY_MODELS else "SMPL model"
+    translation = _display_translation(translation, body_model)
 
     display_smpl(
         {'verts': verts.cpu().detach(),
          'joints': Jtr.cpu().detach()},
         model_faces=smpl_layer.th_faces,
         with_joints=True,
-        kintree_table=smpl_layer.kintree_table,translation = translation, ax = ax)
+        kintree_table=smpl_layer.kintree_table,translation = translation, ax = ax, title=title)
     
 
 # Plotting Pointclouds

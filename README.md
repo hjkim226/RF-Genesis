@@ -76,6 +76,12 @@ Render the same motion pipeline with the infant SMIL body model.
 python run.py -o "a baby crawling forward" -e "a living room" -n "hello_smil" --body-model smil
 ```
 
+Render a pet with the SMAL animal body model.
+```
+python run.py -o "a dog walking across the room" -e "a living room" -n "hello_dog" --body-model dog
+python run.py -o "a cat walking across the room" -e "a living room" -n "hello_cat" --body-model cat
+```
+
 Optional Command:
 
 Skiping visualization rendering
@@ -90,12 +96,22 @@ Choose the body mesh model
 ```
 --body-model smpl   # default adult SMPL
 --body-model smil   # infant SMIL, expects models/smpl_models/smil_web.pkl or SMIL_MODEL_PATH
+--body-model dog    # SMAL dog/canidae shape, expects models/smpl_models/smal_CVPR2017*.pkl
+--body-model cat    # SMAL cat/felidae shape, expects models/smpl_models/smal_CVPR2017*.pkl
 ```
 Choose the SMPL gender
 ```
 --gender male       # default adult male SMPL
 --gender female     # adult female SMPL, expects models/female.ply and the female SMPL pkl
 ```
+
+SMAL pet support expects `models/smpl_models/smal_CVPR2017.pkl` and
+`models/smpl_models/smal_CVPR2017_data.pkl`. You can override those defaults
+with `SMAL_MODEL_ROOT`, `SMAL_MODEL_PATH`, and `SMAL_DATA_PATH`. It uses the
+family cluster means from `smal_CVPR2017_data.pkl` (`cat` = felidae cluster 0,
+`dog` = canidae cluster 1). The current motion generator remains human/SMPL-based,
+so dog/cat rendering preserves the generated root trajectory and renders a neutral
+SMAL pose rather than a quadruped gait.
 
 ## RFLoRA
 

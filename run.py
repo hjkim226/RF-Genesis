@@ -17,20 +17,22 @@ torch.set_default_device('cuda')
 def get_args():
     # Create the parser
     parser = argparse.ArgumentParser(description='List the content of a folder')
-    parser.add_argument('-o', '--obj-prompt', type=str, help='Specify the object prompt')
+    parser.add_argument('-o', '--obj-prompt', type=str, required=True, help='Specify the object prompt')
     parser.add_argument('-e','--env-prompt', type=str, help='Specify the environment prompt')
     parser.add_argument('-n', '--name', type=str, help='Specify the name (optional)')
-    parser.add_argument('--no-visualize',  dest='skip_visualize', default= False,
+    parser.add_argument('--no-visualize',  dest='skip_visualize', action='store_true', default=False,
                         help='Disable visualization step (default: enabled)')
-    parser.add_argument('--no-environment',  dest='skip_environment', default= False,
+    parser.add_argument('--no-environment',  dest='skip_environment', action='store_true', default=False,
                         help='Disable environment PIR generation (default: enabled)')
-    parser.add_argument('--body-model', choices=['smpl', 'smil'], default='smpl',
-                        help='Body mesh model to render: adult SMPL or infant SMIL (default: smpl)')
+    parser.add_argument('--body-model', choices=['smpl', 'smil', 'dog', 'cat'], default='smpl',
+                        help='Body mesh model to render: adult SMPL, infant SMIL, or SMAL dog/cat (default: smpl)')
     parser.add_argument('--gender', choices=['male', 'female'], default='male',
                         help='SMPL gender to render when using --body-model smpl (default: male)')
 
 
     args = parser.parse_args()
+    if not args.skip_environment and args.env_prompt is None:
+        parser.error('Please provide -e/--env-prompt, or pass --no-environment to skip environment PIR generation.')
 
     return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model, args.gender
 
@@ -55,7 +57,7 @@ def main():
         existing_body = np.load(obj_diff_file, allow_pickle=True)
         existing_body_model = str(existing_body['body_model']) if 'body_model' in existing_body else 'smpl'
         existing_gender = str(existing_body['gender']) if 'gender' in existing_body else 'male'
-        retarget_body = existing_body_model != body_model or existing_gender != gender
+        retarget_body = existing_body_model != body_model or (body_model == 'smpl' and existing_gender != gender)
 
     if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
