@@ -5,6 +5,10 @@ import numpy as np
 from .radar import Radar
 from PIL import Image
 import math
+
+# Phase 2 domain radar tuning
+from genesis.domain.radar_tuning import get_radar_domain_config
+
 torch.set_default_device('cuda')
 
 def calculate_environment_points(environment_pir):
@@ -34,93 +38,124 @@ def calculate_environment_points(environment_pir):
     points = xyz.reshape(-1, 3)  # [H*W, 3]
     return points
 
-def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, remove_zeros = True):
-    num_frames = len(_frames)   
+def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, remove_zeros=True,
+                        body_model: str = None):
+    """
+    Phase 2 enhanced version:
+    - Accepts optional body_model to apply domain-specific RCS scaling and micro-velocity jitter.
+    - The velocity channel already computed in pathtracer is used as base;
+      we add small high-frequency radial perturbations for breathing/tail/fur effects.
+    """
+    num_frames = len(_frames)
     total_time = num_frames / frame_rate
     frames = _frames.copy()
     pointclouds = _pointclouds.copy()
 
-    if environment_pir != None:
+    # Load domain radar config once
+    radar_cfg = None
+    if body_model is not None:
+        try:
+            radar_cfg = get_radar_domain_config(body_model)
+        except Exception:
+            radar_cfg = None
+
+    rcs_scale = radar_cfg.rcs_scale if radar_cfg else 1.0
+    micro_amp = radar_cfg.micro_doppler_amp if radar_cfg else 0.0
+
+    if environment_pir is not None:
         # redue the size of environment PIR to reduce the memory usages
         environment_pir = environment_pir.resize((64, 64), resample=Image.Resampling.BILINEAR)
-        environment_pir = torch.tensor(np.array(environment_pir),dtype=torch.float32)/255.0
+        environment_pir = torch.tensor(np.array(environment_pir), dtype=torch.float32) / 255.0
         environment_points = calculate_environment_points(environment_pir)
-        environment_intensity = environment_pir[:,:,1].flatten()
+        environment_intensity = environment_pir[:, :, 1].flatten()
+
     def interpolator(time):
-            if time < 0 or time > total_time:
-                raise ValueError("Invalid time value")
-            
-            frame_index = int(time * frame_rate)
-            if frame_index == num_frames:
-                return frames[-1]
-            
-            t = (time * frame_rate) % 1 # fractional part of time
-            frame1 = frames[frame_index]
-            frame2 = frames[frame_index + 1]
+        if time < 0 or time > total_time:
+            raise ValueError("Invalid time value")
 
-            pointcloud1 = pointclouds[frame_index]
-            pointcloud2 = pointclouds[frame_index + 1]
+        frame_index = int(time * frame_rate)
+        if frame_index == num_frames:
+            return frames[-1]
 
+        t = (time * frame_rate) % 1  # fractional part of time
+        frame1 = frames[frame_index]
+        frame2 = frames[frame_index + 1]
 
+        pointcloud1 = pointclouds[frame_index].clone() if isinstance(pointclouds[frame_index], torch.Tensor) else torch.from_numpy(pointclouds[frame_index]).cuda()
+        pointcloud2 = pointclouds[frame_index + 1].clone() if isinstance(pointclouds[frame_index + 1], torch.Tensor) else torch.from_numpy(pointclouds[frame_index + 1]).cuda()
 
-            zero_depth_frame1 = frame1[:,:, 1] == 0  # zero depth pixels
-            zero_depth_frame2 = frame2[:,:, 1] == 0
+        zero_depth_frame1 = frame1[:, :, 1] == 0
+        zero_depth_frame2 = frame2[:, :, 1] == 0
 
-            zero_depth_frame1_flat = zero_depth_frame1.reshape(-1)
-            zero_depth_frame2_flat = zero_depth_frame2.reshape(-1)
+        zero_depth_frame1_flat = zero_depth_frame1.reshape(-1)
+        zero_depth_frame2_flat = zero_depth_frame2.reshape(-1)
 
+        frame1[zero_depth_frame1] = frame2[zero_depth_frame1]
+        frame2[zero_depth_frame2] = frame1[zero_depth_frame2]
 
-            frame1[zero_depth_frame1] = frame2[zero_depth_frame1] # replace zero depth pixels with the other frame
-            frame2[zero_depth_frame2] = frame1[zero_depth_frame2]
+        if pointcloud1.shape[0] == 3:
+            pointcloud1[:, zero_depth_frame1_flat] = pointcloud2[:, zero_depth_frame1_flat]
+            pointcloud2[:, zero_depth_frame2_flat] = pointcloud1[:, zero_depth_frame2_flat]
+        else:
+            pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat]
+            pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
 
-            if pointcloud1.shape[0] == 3:
-                pointcloud1[:, zero_depth_frame1_flat] = pointcloud2[:, zero_depth_frame1_flat]
-                pointcloud2[:, zero_depth_frame2_flat] = pointcloud1[:, zero_depth_frame2_flat]
-            else:
-                pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat]
-                pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
+        interpolated_frame = frame1 * (1 - t) + frame2 * t
+        interpolated_pointcloud = pointcloud1 * (1 - t) + pointcloud2 * t
 
-            interpolated_frame = frame1 * (1 - t) + frame2 * t
-            interpolated_pointcloud = pointcloud1 * (1 - t) + pointcloud2 * t
+        # Phase 2: Domain-specific micro velocity jitter (adds realistic micro-Doppler)
+        if micro_amp > 1e-4 and interpolated_pointcloud.shape[0] >= 3:
+            # Add small sinusoidal radial perturbation along sensor view direction (approx -Z)
+            phase = time * (2 * np.pi)
+            jitter = micro_amp * 0.6 * torch.sin(torch.tensor(phase + 0.7, device=interpolated_pointcloud.device))
+            # Apply strongest jitter to body points (last N points after env concat)
+            if interpolated_pointcloud.shape[1] > 0:
+                body_points = interpolated_pointcloud.shape[1]
+                # Simple: modulate Z coordinate slightly → changes tof → Doppler
+                z_jitter = jitter * torch.randn(body_points, device=interpolated_pointcloud.device) * 0.4
+                interpolated_pointcloud[2, :] += z_jitter
 
-            flatten_pir  = interpolated_frame.reshape(-1, 3)
+        flatten_pir = interpolated_frame.reshape(-1, 3)
 
-            intensity = flatten_pir[:,0]
-            depth = flatten_pir[:,1]
-            
-            mask = (depth > 0.1) & (intensity > 0.1)
+        intensity = flatten_pir[:, 0] * rcs_scale   # apply domain RCS scaling
+        depth = flatten_pir[:, 1]
 
-            if interpolated_pointcloud.shape[0] == 3:
-                filtered_points = interpolated_pointcloud[:, mask].T
-            else:
-                filtered_points = interpolated_pointcloud[mask]
+        mask = (depth > 0.1) & (intensity > 0.1)
 
-            if environment_pir != None:
-                combined_intensity = torch.cat((environment_intensity, intensity[mask]), dim=0)
-                combined_pointcloud = torch.cat((environment_points, filtered_points), dim=0)
-            else:
-                combined_intensity = intensity[mask]
-                combined_pointcloud = filtered_points
+        if interpolated_pointcloud.shape[0] == 3:
+            filtered_points = interpolated_pointcloud[:, mask].T
+        else:
+            filtered_points = interpolated_pointcloud[mask]
 
-            # return flatten_pir[:,1], interpolated_pointcloud[mask]
-            return combined_intensity, combined_pointcloud
-        
-    
+        if environment_pir is not None:
+            combined_intensity = torch.cat((environment_intensity, intensity[mask]), dim=0)
+            combined_pointcloud = torch.cat((environment_points, filtered_points), dim=0)
+        else:
+            combined_intensity = intensity[mask]
+            combined_pointcloud = filtered_points
+
+        return combined_intensity, combined_pointcloud
+
     return interpolator
 
 
 
 
-def generate_signal_frames(body_pirs,body_auxs,envir_pir, radar_config):
-    interpolator = create_interpolator(body_pirs,body_auxs,envir_pir, frame_rate=30)
+def generate_signal_frames(body_pirs, body_auxs, envir_pir, radar_config, body_model: str = None):
+    """
+    Phase 2: Now accepts body_model so the interpolator can apply
+    domain-specific RCS scaling and micro-Doppler velocity jitter.
+    """
+    interpolator = create_interpolator(body_pirs, body_auxs, envir_pir, frame_rate=30, body_model=body_model)
     total_motion_frames = len(body_pirs)
 
     radar = Radar(radar_config)
 
     total_radar_frame = int(total_motion_frames / 30 * radar.frame_per_second)
     frames = []
-    for i in tqdm(range(total_radar_frame), desc="Generating radar frames"):
-        frame_mimo = radar.frameMIMO(interpolator,i*1.0/radar.frame_per_second)
+    desc = f"Generating radar frames [{body_model}]" if body_model else "Generating radar frames"
+    for i in tqdm(range(total_radar_frame), desc=desc):
+        frame_mimo = radar.frameMIMO(interpolator, i * 1.0 / radar.frame_per_second)
         frames.append(frame_mimo.cpu().numpy())
     frames = np.array(frames)
     return frames

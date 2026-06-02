@@ -5,6 +5,13 @@ import numpy as np
 from . import smpl
 import torch
 from tqdm import tqdm
+
+# Domain radar tuning (Phase 2)
+from genesis.domain.radar_tuning import (
+    get_radar_domain_config,
+    get_reflectance_tint,
+)
+
 mi.set_variant('cuda_ad_rgb')
 torch.set_default_device('cuda')
 
@@ -12,10 +19,12 @@ torch.set_default_device('cuda')
 class RayTracer:
     def __init__(self, body_model="smpl", gender="male") -> None:
         self.PIR_resolution = 128
+        self.body_model = body_model
         self.scene = mi.load_dict(get_deafult_scene(res=self.PIR_resolution, body_model=body_model, gender=gender))
         self.params_scene = mi.traverse(self.scene)
         self.body = smpl.get_smpl_layer(body_model=body_model, gender=gender, device="cuda")
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self._prev_pointcloud = None  # for velocity computation (Phase 2)
 
 
     def gen_rays(self):  
@@ -73,16 +82,33 @@ class RayTracer:
         ray = self.gen_rays()
         si = self.scene.ray_intersect(ray)                   # ray intersection
         intensity = mi.render(self.scene,spp=32)
-        t= si.t
-        t[t>9999]=0
-        distance = np.array(t).reshape(self.PIR_resolution,self.PIR_resolution)
-        intensity = np.array(intensity)[:,:,0]
-        velocity = np.zeros((self.PIR_resolution,self.PIR_resolution))  # the velocity is zero for this static frame, 
-                                                                        # but will be calculated later by calculating the difference between two frames
-        
-        PIR = np.stack([distance,intensity,velocity],axis=2)
-        pointclouds = np.array(si.p)        # We save the points here for faster calculation, it can be calculated from the PIR's distance + sensor's intrinsic metrix
-        return PIR, pointclouds
+        t = si.t
+        t[t > 9999] = 0
+        distance = np.array(t).reshape(self.PIR_resolution, self.PIR_resolution)
+        intensity = np.array(intensity)[:, :, 0]
+
+        # Phase 2: Compute approximate radial velocity from point cloud motion
+        pointcloud = np.array(si.p)
+        velocity = np.zeros((self.PIR_resolution, self.PIR_resolution), dtype=np.float32)
+
+        if self._prev_pointcloud is not None and pointcloud.shape == self._prev_pointcloud.shape:
+            # Simple finite difference → radial velocity proxy (toward sensor at origin)
+            delta = pointcloud - self._prev_pointcloud
+            # Project onto line-of-sight (approx -Z in this sensor frame)
+            radial_vel = -delta[:, :, 2] * 30.0   # scale to m/s assuming ~30 fps
+            velocity = radial_vel.astype(np.float32)
+
+        self._prev_pointcloud = pointcloud.copy()
+
+        # Apply domain RCS scaling to intensity (stronger for animals, weaker for infants)
+        try:
+            rcs_scale = get_radar_domain_config(self.body_model).rcs_scale
+            intensity = intensity * rcs_scale
+        except Exception:
+            pass
+
+        PIR = np.stack([distance, intensity, velocity], axis=2)
+        return PIR, pointcloud
     
 
 
@@ -120,6 +146,11 @@ def get_deafult_scene(res=512, body_model="smpl", gender="male"):
         },
     })
 
+    # Phase 2: Domain-specific material proxy (fur vs infant skin vs adult clothing)
+    try:
+        tint = get_reflectance_tint(body_model)
+    except Exception:
+        tint = (0.8, 0.8, 0.8)
 
     default_scene ={
             'type': 'scene',
@@ -128,7 +159,7 @@ def get_deafult_scene(res=512, body_model="smpl", gender="male"):
             
             'while':{
                 'type':'diffuse',
-                'reflectance': { 'type': 'rgb', 'value': (0.8, 0.8, 0.8) }, 
+                'reflectance': { 'type': 'rgb', 'value': tint }, 
             },
             'smpl':{
                 'type': 'ply',
@@ -160,21 +191,30 @@ def trace(motion_filename):
     root_translation = smpl_data['root_translation']
     body_model = str(smpl_data['body_model']) if 'body_model' in smpl_data else 'smpl'
     gender = str(smpl_data['gender']) if 'gender' in smpl_data else 'male'
-    max_distance = np.max(root_translation[:,2])+2
-    body_offset = np.array([0,1,3])
-    sensor_origin = np.array([0,0,0])
-    sensor_target = np.array([0,0,-5])
+
+    # Phase 2: Load radar domain config (RCS, micro-Doppler hints, material tint already applied in scene)
+    try:
+        radar_cfg = get_radar_domain_config(body_model)
+    except Exception:
+        radar_cfg = None
+
+    max_distance = np.max(root_translation[:, 2]) + 2
+    body_offset = np.array([0, 1, 3])
 
     raytracer = RayTracer(body_model=body_model, gender=gender)
     PIRs = []
     pointclouds = []
     total_motion_frames = len(root_translation)
 
-    for frame_idx in tqdm(range(0, total_motion_frames), desc="Rendering Body PIRs"):
-        raytracer.update_pose(smpl_data['pose'][frame_idx], smpl_data['shape'], np.array(root_translation[frame_idx]) -  body_offset)
+    for frame_idx in tqdm(range(0, total_motion_frames), desc=f"Rendering Body PIRs [{body_model}]"):
+        raytracer.update_pose(smpl_data['pose'][frame_idx], smpl_data['shape'], np.array(root_translation[frame_idx]) - body_offset)
         PIR, pc = raytracer.trace()
         PIRs.append(torch.from_numpy(PIR).cuda())
         pointclouds.append(torch.from_numpy(pc).cuda())
+
+    if radar_cfg is not None:
+        print(f"[RFGen.Pathtracer] Domain radar config for '{body_model}': "
+              f"RCS×{radar_cfg.rcs_scale:.2f}, μDoppler_amp={radar_cfg.micro_doppler_amp:.3f}")
 
     # pointclouds = torch.stack(pointclouds, dim=0)
     return PIRs, pointclouds
