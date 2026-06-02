@@ -31,17 +31,27 @@ def get_args():
                              'See genesis/domain/registry.py for per-domain RCS, gait, and micro-motion profiles.')
     parser.add_argument('--gender', choices=['male', 'female'], default='male',
                         help='SMPL gender to render when using --body-model smpl (default: male)')
+    parser.add_argument('--animal-motion-backend',
+                        choices=['auto', 'animalml3d', 'procedural'],
+                        default='auto',
+                        help='Motion generation backend for quadruped models (dog/cat). '
+                             '"auto" tries animalml3d first, falls back to procedural. '
+                             '"procedural" uses the original sinusoidal trot (no external deps). '
+                             '(default: auto)')
 
 
     args = parser.parse_args()
     if not args.skip_environment and args.env_prompt is None:
         parser.error('Please provide -e/--env-prompt, or pass --no-environment to skip environment PIR generation.')
 
-    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model, args.gender, args.skip_micro_motions
+    return (args.obj_prompt, args.env_prompt, args.name, args.skip_visualize,
+            args.skip_environment, args.body_model, args.gender, args.skip_micro_motions,
+            args.animal_motion_backend)
 
 
 def main():
-    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model, gender, skip_micro_motions = get_args()
+    (obj_prompt, env_prompt, name, skip_visualize, skip_environment,
+     body_model, gender, skip_micro_motions, animal_motion_backend) = get_args()
     # obj_prompt, env_prompt, name = "a person walking back and forth", "", "test"
 
     
@@ -65,7 +75,8 @@ def main():
     if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
         object_diff.generate(obj_prompt, output_dir, body_model=body_model, gender=gender,
-                             skip_micro_motions=skip_micro_motions)
+                             skip_micro_motions=skip_micro_motions,
+                             animal_motion_backend=animal_motion_backend)
     elif retarget_body:
         print(colored('[RFGen] Step 1/4: Retargeting existing body motion to {} {}: '.format(gender, body_model.upper()), 'green'))
         object_diff.retarget_body_model(output_dir, body_model=body_model, gender=gender,

@@ -82,6 +82,49 @@ def save_body_motion(out_dir, pose, root_translation, body_model="smpl", gender=
     )
 
 
+def _generate_quadruped(
+    prompt, out_dir, body_model, animal_motion_backend, skip_micro_motions,
+    num_frames=120, fps=30.0,
+):
+    """
+    Bypass MDM entirely for quadruped (SMAL) models.
+    Uses the animal motion backend to generate SMAL-native pose sequences,
+    then optionally injects micro-motions before saving.
+    """
+    from termcolor import colored
+    from genesis.motion.animal_motion import generate_quadruped_motion, list_available_backends
+
+    available = list_available_backends()
+    print(colored(
+        f"[RFGen.AnimalMotion] Available backends: {available}  →  using '{animal_motion_backend}'",
+        'cyan',
+    ))
+
+    pose, root_translation = generate_quadruped_motion(
+        prompt=prompt,
+        num_frames=num_frames,
+        body_model=body_model,
+        fps=fps,
+        backend=animal_motion_backend,
+    )
+
+    if not skip_micro_motions:
+        from genesis.retargeting.micro_motion import inject_micro_motions
+        from genesis.domain.registry import get_micro_motion_profile
+        profile = get_micro_motion_profile(body_model)
+        if profile != "none":
+            for i in range(len(pose)):
+                pose[i] = inject_micro_motions(
+                    pose[i], t=i / fps, body_model=body_model, profile=profile
+                )
+
+    save_body_motion(
+        out_dir, pose, root_translation,
+        body_model=body_model, gender="neutral",
+        skip_micro_motions=skip_micro_motions,
+    )
+
+
 def retarget_body_model(out_dir, body_model="smpl", gender=None, skip_micro_motions=False):
     data = np.load(out_dir + '/obj_diff.npz', allow_pickle=True)
     gender = gender or (str(data['gender']) if 'gender' in data else 'male')
@@ -103,7 +146,7 @@ def euler_to_axis_angle(euler_angles):
 
     return axis_angle_params
 
-def process(out_dir, body_model="smpl", gender="male", skip_micro_motions=False):
+def process(out_dir, body_model="smpl", gender="male", skip_micro_motions=False, animal_motion_backend="auto"):
     filename = out_dir+"/obj_diff_raw.npy"
     print(colored("---[RFGen.ObjDiff]:Runing SMPLify, it may take a few minutes.---", 'yellow'))
     print(colored("---[RFGen.ObjDiff]:This may be optimized in future updates.---", 'yellow'))
@@ -145,6 +188,9 @@ def process(out_dir, body_model="smpl", gender="male", skip_micro_motions=False)
     if not skip_micro_motions:
         domain = get_domain(body_model)
         if domain.is_quadruped:
+            # Quadruped path: this branch is only reached when process() is called
+            # directly (e.g. retarget_body_model).  The primary generation path now
+            # bypasses MDM and calls _generate_quadruped() instead.
             smpl_params, root_translation = retarget_to_smal_quadruped(
                 smpl_params, root_translation, body_model=body_model
             )
@@ -166,13 +212,37 @@ def process(out_dir, body_model="smpl", gender="male", skip_micro_motions=False)
     
 
 
-def generate(prompt, out_dir, body_model="smpl", gender="male", skip_micro_motions=False):
+def generate(prompt, out_dir, body_model="smpl", gender="male", skip_micro_motions=False,
+             animal_motion_backend="auto"):
+    """
+    Generate body motion for the given prompt and body model.
 
+    For quadruped models (dog, cat) this bypasses MDM and calls the animal motion
+    backend directly, avoiding the human-motion→SMAL retargeting mismatch.
+    For all other models (smpl, smil) the original MDM pipeline is used.
+
+    Parameters
+    ----------
+    animal_motion_backend : str
+        One of "auto" | "animalml3d" | "procedural".
+        Only used when body_model is a SMAL quadruped (dog / cat).
+        "auto" tries installed backends in priority order, falls back to procedural.
+    """
+    if body_model in SMAL_BODY_MODELS:
+        _generate_quadruped(
+            prompt, out_dir,
+            body_model=body_model,
+            animal_motion_backend=animal_motion_backend,
+            skip_micro_motions=skip_micro_motions,
+        )
+        return
+
+    # Human / infant: use MDM as before
     os.chdir("ext/mdm/")
     subprocess.run(
-        ['python', '-m', 'sample.generate_rfgen', '--model_path', './save/humanml_trans_enc_512/model000200000.pt', 
-         '--text_prompt', prompt, 
-         '--output_dir', "../../"+out_dir, 
+        ['python', '-m', 'sample.generate_rfgen', '--model_path', './save/humanml_trans_enc_512/model000200000.pt',
+         '--text_prompt', prompt,
+         '--output_dir', "../../"+out_dir,
          '--num_samples', '1', '--num_repetitions', '1'])
     os.chdir("../..")
     process(out_dir, body_model=body_model, gender=gender, skip_micro_motions=skip_micro_motions)
