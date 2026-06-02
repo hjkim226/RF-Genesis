@@ -20,18 +20,23 @@ import numpy as np
 
 
 # SMIL uses the same 24-joint / 72-dim layout as SMPL (root + 21 body + 2 hand pads).
-# We only touch a few joints for infant character.
+# Standard SMPL-24 joint ordering (Loper et al., 2015):
+#   0 Pelvis  1 L_Hip   2 R_Hip   3 Spine1  4 L_Knee  5 R_Knee
+#   6 Spine2  7 L_Ankle 8 R_Ankle 9 Spine3 10 L_Foot 11 R_Foot
+#  12 Neck   13 L_Collar 14 R_Collar 15 Head 16 L_Shoulder 17 R_Shoulder
+#  18 L_Elbow 19 R_Elbow 20 L_Wrist 21 R_Wrist 22 L_Hand 23 R_Hand
 
 SMIL_JOINTS = {
     "root": 0,
+    "left_hip": 1,       "right_hip": 2,
     "spine": 3,
+    "left_knee": 4,      "right_knee": 5,
     "chest": 6,
+    "left_ankle": 7,     "right_ankle": 8,
     "neck": 9,
-    "head": 12,
-    "left_shoulder": 13, "left_elbow": 14, "left_wrist": 15,
-    "right_shoulder": 16, "right_elbow": 17, "right_wrist": 18,
-    "left_hip": 1, "left_knee": 2, "left_ankle": 4,
-    "right_hip": 5, "right_knee": 7, "right_ankle": 8,
+    "head": 15,
+    "left_shoulder": 16, "left_elbow": 18, "left_wrist": 20,
+    "right_shoulder": 17, "right_elbow": 19, "right_wrist": 21,
 }
 
 

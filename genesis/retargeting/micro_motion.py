@@ -18,7 +18,7 @@ import numpy as np
 
 
 def get_micro_motion_fn(profile: str):
-    """Return a function(vertices, t, body_model) -> vertex_delta (V,3) or pose_delta."""
+    """Return a function(t, body_model, amp) -> Dict[joint_name, axis_angle_delta]."""
     if profile == "tail_wag":
         return _tail_wag
     if profile == "breathing_fidget":
@@ -78,11 +78,16 @@ def inject_micro_motions(
         return pose
 
     out = pose.copy()
-    # Very small joint index mapping — extend as needed
+    # Joint index → pose array position (joint i → dims [i*3 .. i*3+2]).
+    # SMAL-verified indices from smal_CVPR2017.pkl kintree (see quadruped.py).
+    # SMPL/SMIL spine/chest indices follow the standard SMPL-24 ordering.
+    # "left_ear" is intentionally absent: the 33-joint SMAL model has no dedicated
+    # ear joints, so _ear_twitch deltas are silently dropped.
     joint_map = {
-        "tail_base": 4, "tail_mid": 5,
-        "chest": 6, "spine": 3,
-        "left_ear": 19,   # placeholder indices
+        "tail_base": 25,  # SMAL: first tail joint (branches from root/pelvis)
+        "tail_mid":  28,  # SMAL: mid-tail (4th of 7 tail joints)
+        "chest":      6,  # SMPL/SMIL: Spine2 / SMAL: thorax
+        "spine":      3,  # SMPL/SMIL: Spine1 / SMAL: spine_3
     }
 
     for joint_name, delta in deltas.items():

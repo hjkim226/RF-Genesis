@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import numpy as np
+import torch
 from scipy.spatial.distance import cdist
 from scipy.ndimage import gaussian_filter1d
 

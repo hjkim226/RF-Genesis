@@ -22,31 +22,43 @@ from typing import Optional, Tuple
 import numpy as np
 
 
-# SMAL joint layout assumptions (based on CVPR 2017 model + RF-Genesis BodyModelLayer)
-# 33 joints total → 99 pose dims. We only animate a subset for a convincing trot.
-# Indices below are illustrative; they match the kintree order in smal_CVPR2017.pkl
-# for the major limbs + tail. Adjust if your exact pickle differs.
+# SMAL joint layout — verified against smal_CVPR2017.pkl kintree_table.
+# 33 joints total → 99 pose dims (axis-angle, joint i → dims [i*3 .. i*3+2]).
+#
+# Skeleton topology (x = forward, y = left, z = up in rest pose):
+#   Spine chain  : 0→1→2→3→4→5→6  (pelvis → sacrum → lumbar → thoracic → thorax/withers)
+#   Front-left leg  : 6→7→8→9→10   (shoulder → elbow → wrist → paw)
+#   Front-right leg : 6→11→12→13→14
+#   Neck / head     : 6→15→16→32   (neck → head → face/nose)
+#   Rear-left leg   : 0→17→18→19→20  (hip → knee → ankle → paw)
+#   Rear-right leg  : 0→21→22→23→24
+#   Tail            : 0→25→26→27→28→29→30→31  (base → tip, 7 joints)
 SMAL_JOINTS = {
     "root": 0,
-    "spine": 1,
-    "neck": 2,
-    "head": 3,
-    "tail_base": 4,
-    "tail_mid": 5,
-    "tail_tip": 6,
+    "spine_1": 1, "spine_2": 2, "spine_3": 3,
+    "spine_4": 4, "spine_5": 5, "thorax": 6,
     "front_left_shoulder": 7,
     "front_left_elbow": 8,
-    "front_left_paw": 9,
-    "front_right_shoulder": 10,
-    "front_right_elbow": 11,
-    "front_right_paw": 12,
-    "rear_left_hip": 13,
-    "rear_left_knee": 14,
-    "rear_left_paw": 15,
-    "rear_right_hip": 16,
-    "rear_right_knee": 17,
-    "rear_right_paw": 18,
-    # ... (ears, jaw, etc. left at rest for v1)
+    "front_left_wrist": 9,
+    "front_left_paw": 10,
+    "front_right_shoulder": 11,
+    "front_right_elbow": 12,
+    "front_right_wrist": 13,
+    "front_right_paw": 14,
+    "neck": 15,
+    "head": 16,
+    "rear_left_hip": 17,
+    "rear_left_knee": 18,
+    "rear_left_ankle": 19,
+    "rear_left_paw": 20,
+    "rear_right_hip": 21,
+    "rear_right_knee": 22,
+    "rear_right_ankle": 23,
+    "rear_right_paw": 24,
+    "tail_base": 25,
+    "tail_mid": 28,   # mid-point of the 7-joint tail chain (joints 25-31)
+    "tail_tip": 31,
+    "face": 32,
 }
 
 # Phase offsets for a natural trotting gait (in radians, relative to cycle)
@@ -125,11 +137,10 @@ def retarget_to_smal_quadruped(
     # 1. Copy / map root orientation (first 3 dims) — preserve turning intent
     out_pose[:, :3] = pose[:, :3]
 
-    # 2. Basic spine / neck carry-over (human torso lean → animal spine)
-    #    We keep a relaxed quadruped spine and only add subtle bob.
+    # 2. Basic spine carry-over (human torso lean → SMAL spine_1/spine_2, attenuated)
     if pose.shape[1] >= 12:
-        out_pose[:, 3:6] = pose[:, 3:6] * 0.3   # spine (attenuated)
-        out_pose[:, 6:9] = pose[:, 6:9] * 0.2   # neck
+        out_pose[:, 3:6] = pose[:, 3:6] * 0.3   # spine_1 dims
+        out_pose[:, 6:9] = pose[:, 6:9] * 0.2   # spine_2 dims
 
     # 3. Procedural trot cycle
     t = np.arange(T, dtype=np.float32) / 30.0   # assume ~30 fps input for phase
@@ -154,11 +165,11 @@ def retarget_to_smal_quadruped(
         out_pose[:, paw * 3 + 1] = lift * 1.8
 
     # 4. Tail wag (coupled to gait for liveliness)
-    tail_base = SMAL_JOINTS["tail_base"]
-    tail_mid = SMAL_JOINTS["tail_mid"]
-    wag = tail_wag_amp * np.sin(2 * np.pi * gait_freq * 1.3 * t)   # slightly faster than steps
-    out_pose[:, tail_base * 3 + 2] = wag * 0.6
-    out_pose[:, tail_mid * 3 + 2] = wag * 1.0
+    tail_base_idx = SMAL_JOINTS["tail_base"]   # 25
+    tail_mid_idx  = SMAL_JOINTS["tail_mid"]    # 28
+    wag = tail_wag_amp * np.sin(2 * np.pi * gait_freq * 1.3 * t)
+    out_pose[:, tail_base_idx * 3 + 2] = wag * 0.6
+    out_pose[:, tail_mid_idx  * 3 + 2] = wag * 1.0
 
     # 5. Ground contact enforcement (very approximate — projects paw height)
     #    In a full system you would run a lightweight foot IK. Here we just
@@ -170,12 +181,12 @@ def retarget_to_smal_quadruped(
 
     # 6. Cat vs dog nuance (cats have slightly more "crouched" rear)
     if body_model == "cat":
-        out_pose[:, SMAL_JOINTS["rear_left_hip"] * 3 + 1] += 0.25
-        out_pose[:, SMAL_JOINTS["rear_right_hip"] * 3 + 1] += 0.25
+        out_pose[:, SMAL_JOINTS["rear_left_hip"]  * 3 + 1] += 0.25   # joint 17
+        out_pose[:, SMAL_JOINTS["rear_right_hip"] * 3 + 1] += 0.25   # joint 21
 
-    # 7. Gentle head bob / turning carry-over (from human root intent)
+    # 7. Gentle head bob coupled to gait
     if pose.shape[1] > 9:
         head_bob = 0.15 * np.sin(2 * np.pi * gait_freq * 2.0 * t)
-        out_pose[:, SMAL_JOINTS["head"] * 3 + 1] = head_bob
+        out_pose[:, SMAL_JOINTS["head"] * 3 + 1] = head_bob           # joint 16
 
     return out_pose.astype(np.float32), root_translation.astype(np.float32)
