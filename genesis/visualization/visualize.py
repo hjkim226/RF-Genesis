@@ -54,9 +54,10 @@ def display_smpl(
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    ax.set_xlim(-2, 2)
-    ax.set_ylim(-0.5, 2)
-    ax.set_zlim(-1, 3)
+    cx, cy, cz = (float(translation[0]), float(translation[1]), float(translation[2])) if translation is not None else (0.0, 0.0, 0.0)
+    ax.set_xlim(cx - 2, cx + 2)
+    ax.set_ylim(cy - 0.5, cy + 2)
+    ax.set_zlim(cz - 1, cz + 3)
     ax.view_init(azim=-90, elev=100)
     ax.view_init(azim=30, elev=30, roll = 105)
     ax.set_title(title, fontsize=20)
@@ -120,8 +121,12 @@ def draw_poinclouds_on_axis(pc,ax, tx,rx,elev,azim,title):
         ax.scatter(tx[:,0], tx[:,2], tx[:,1], c="green", s= 50, marker =',', cmap=plt.hot())
     if rx is not None:
         ax.scatter(rx[:,0], rx[:,2], rx[:,1], c="orange", s= 50, marker =',', cmap=plt.hot())
+    if pc.shape[1] > 0:
+        y_max = max(float(pc[1].max()) * 1.2, 2.0)
+    else:
+        y_max = 6.0
     ax.set_xlim(-2, 2)
-    ax.set_ylim(-0, 6)
+    ax.set_ylim(0, y_max)
     ax.set_zlim(-0.5, 2)
     ax.set_xlabel('X')
     ax.set_ylabel('Z')
