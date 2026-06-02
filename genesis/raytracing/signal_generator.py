@@ -11,6 +11,23 @@ from genesis.domain.radar_tuning import get_radar_domain_config
 
 torch.set_default_device('cuda')
 
+
+def _as_tensor(value):
+    if isinstance(value, torch.Tensor):
+        return value.clone()
+    return torch.tensor(value, dtype=torch.float32)
+
+
+def _flatten_pointcloud(pointcloud):
+    pointcloud = _as_tensor(pointcloud)
+    if pointcloud.ndim == 3 and pointcloud.shape[-1] == 3:
+        return pointcloud.reshape(-1, 3)
+    if pointcloud.ndim == 2 and pointcloud.shape[1] == 3:
+        return pointcloud
+    if pointcloud.ndim == 2 and pointcloud.shape[0] == 3:
+        return pointcloud.T
+    raise ValueError(f"Unsupported pointcloud shape: {tuple(pointcloud.shape)}")
+
 def calculate_environment_points(environment_pir):
     """
     environment_pir: (H, W, 3) torch tensor, assumed to be on the correct device (e.g., CUDA)
@@ -48,8 +65,8 @@ def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, r
     """
     num_frames = len(_frames)
     total_time = num_frames / frame_rate
-    frames = _frames.copy()
-    pointclouds = _pointclouds.copy()
+    frames = [_as_tensor(frame) for frame in _frames]
+    pointclouds = [_flatten_pointcloud(pc) for pc in _pointclouds]
 
     # Load domain radar config once
     radar_cfg = None
@@ -69,23 +86,36 @@ def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, r
         environment_points = calculate_environment_points(environment_pir)
         environment_intensity = environment_pir[:, :, 1].flatten()
 
+    def _filter_frame(frame, pointcloud):
+        flatten_pir = frame.reshape(-1, 3)
+        depth = flatten_pir[:, 0]
+        intensity = flatten_pir[:, 1] * rcs_scale
+        mask = (depth > 0.1) & (intensity > 0.1)
+        filtered_points = pointcloud[mask]
+        if environment_pir is not None:
+            return (
+                torch.cat((environment_intensity, intensity[mask]), dim=0),
+                torch.cat((environment_points, filtered_points), dim=0),
+            )
+        return intensity[mask], filtered_points
+
     def interpolator(time):
         if time < 0 or time > total_time:
             raise ValueError("Invalid time value")
 
         frame_index = int(time * frame_rate)
-        if frame_index == num_frames:
-            return frames[-1]
+        if frame_index >= num_frames - 1:
+            return _filter_frame(frames[-1], pointclouds[-1])
 
         t = (time * frame_rate) % 1  # fractional part of time
-        frame1 = frames[frame_index]
-        frame2 = frames[frame_index + 1]
+        frame1 = frames[frame_index].clone()
+        frame2 = frames[frame_index + 1].clone()
 
-        pointcloud1 = pointclouds[frame_index].clone() if isinstance(pointclouds[frame_index], torch.Tensor) else torch.from_numpy(pointclouds[frame_index]).cuda()
-        pointcloud2 = pointclouds[frame_index + 1].clone() if isinstance(pointclouds[frame_index + 1], torch.Tensor) else torch.from_numpy(pointclouds[frame_index + 1]).cuda()
+        pointcloud1 = pointclouds[frame_index].clone()
+        pointcloud2 = pointclouds[frame_index + 1].clone()
 
-        zero_depth_frame1 = frame1[:, :, 1] == 0
-        zero_depth_frame2 = frame2[:, :, 1] == 0
+        zero_depth_frame1 = frame1[:, :, 0] == 0
+        zero_depth_frame2 = frame2[:, :, 0] == 0
 
         zero_depth_frame1_flat = zero_depth_frame1.reshape(-1)
         zero_depth_frame2_flat = zero_depth_frame2.reshape(-1)
@@ -93,48 +123,22 @@ def create_interpolator(_frames, _pointclouds, environment_pir, frame_rate=30, r
         frame1[zero_depth_frame1] = frame2[zero_depth_frame1]
         frame2[zero_depth_frame2] = frame1[zero_depth_frame2]
 
-        if pointcloud1.shape[0] == 3:
-            pointcloud1[:, zero_depth_frame1_flat] = pointcloud2[:, zero_depth_frame1_flat]
-            pointcloud2[:, zero_depth_frame2_flat] = pointcloud1[:, zero_depth_frame2_flat]
-        else:
-            pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat]
-            pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
+        pointcloud1[zero_depth_frame1_flat] = pointcloud2[zero_depth_frame1_flat]
+        pointcloud2[zero_depth_frame2_flat] = pointcloud1[zero_depth_frame2_flat]
 
         interpolated_frame = frame1 * (1 - t) + frame2 * t
         interpolated_pointcloud = pointcloud1 * (1 - t) + pointcloud2 * t
 
         # Phase 2: Domain-specific micro velocity jitter (adds realistic micro-Doppler)
-        if micro_amp > 1e-4 and interpolated_pointcloud.shape[0] >= 3:
+        if micro_amp > 1e-4 and interpolated_pointcloud.shape[0] > 0:
             # Add small sinusoidal radial perturbation along sensor view direction (approx -Z)
             phase = time * (2 * np.pi)
             jitter = micro_amp * 0.6 * torch.sin(torch.tensor(phase + 0.7, device=interpolated_pointcloud.device))
-            # Apply strongest jitter to body points (last N points after env concat)
-            if interpolated_pointcloud.shape[1] > 0:
-                body_points = interpolated_pointcloud.shape[1]
-                # Simple: modulate Z coordinate slightly → changes tof → Doppler
-                z_jitter = jitter * torch.randn(body_points, device=interpolated_pointcloud.device) * 0.4
-                interpolated_pointcloud[2, :] += z_jitter
+            # Simple: modulate Z coordinate slightly -> changes tof -> Doppler
+            z_jitter = jitter * torch.randn(interpolated_pointcloud.shape[0], device=interpolated_pointcloud.device) * 0.4
+            interpolated_pointcloud[:, 2] += z_jitter
 
-        flatten_pir = interpolated_frame.reshape(-1, 3)
-
-        intensity = flatten_pir[:, 0] * rcs_scale   # apply domain RCS scaling
-        depth = flatten_pir[:, 1]
-
-        mask = (depth > 0.1) & (intensity > 0.1)
-
-        if interpolated_pointcloud.shape[0] == 3:
-            filtered_points = interpolated_pointcloud[:, mask].T
-        else:
-            filtered_points = interpolated_pointcloud[mask]
-
-        if environment_pir is not None:
-            combined_intensity = torch.cat((environment_intensity, intensity[mask]), dim=0)
-            combined_pointcloud = torch.cat((environment_points, filtered_points), dim=0)
-        else:
-            combined_intensity = intensity[mask]
-            combined_pointcloud = filtered_points
-
-        return combined_intensity, combined_pointcloud
+        return _filter_frame(interpolated_frame, interpolated_pointcloud)
 
     return interpolator
 

@@ -11,7 +11,7 @@ import cv2
 from tqdm import tqdm
 
 from genesis.raytracing.radar import Radar 
-from genesis.visualization.pointcloud import PointCloudProcessCFG, frame2pointcloud,rangeFFT,dopplerFFT,process_pc
+from genesis.visualization.pointcloud import PointCloudProcessCFG, frame2pointcloud, rangeFFT, dopplerFFT, process_pc, clutter_removal
 from genesis.raytracing import smpl
 
 
@@ -210,6 +210,44 @@ def save_video(radar_cfg_file, radar_frames_file, smpl_data_file, output_file):
     np.save(os.path.join(output_dir, "radarllm_6d.npy"),
             np.array(radarllm_data, dtype=object))
     print(f"\nSaved {len(pointclouds)} frames to pointclouds.npy and radarllm_6d.npy")
+
+    # --- NEW: also emit mmExpert format dense radar views (range/doppler/az vs slow-time) ---
+    # This lets RF-Genesis outputs be used directly (or with minimal conversion) by mmExpert
+    # for CLIP pretrain / LLM fine-tune. Uses the exact same range/doppler pipeline + virtual
+    # array azimuth (padded to 128 bins to match mmExpert encoder expectations of 256/128/128).
+    try:
+        n_chirp = pointcloud_cfg.frameConfig.numLoopsPerFrame
+        n_adc = pointcloud_cfg.frameConfig.numADCSamples
+        range_time_list, dop_time_list, az_time_list = [], [], []
+        for frame in radar_frames:  # each (3,4,128,256) or equiv
+            r = rangeFFT(frame, n_adc)
+            r = clutter_removal(r, axis=2)  # static clutter (as done for PC extraction)
+            d = dopplerFFT(r, n_chirp)      # (3,4,dop,range)
+            rp = np.abs(d).mean(axis=(0, 1, 2))   # range profile (256,)
+            dp = np.abs(d).mean(axis=(0, 1, 3))   # doppler profile (128,)
+            # azimuth profile via virtual array (12 elems) padded FFT -> 128 bins
+            virt = d.reshape(12, d.shape[2], d.shape[3])
+            apad = np.zeros((128, virt.shape[1], virt.shape[2]), dtype=complex)
+            apad[:12, :, :] = virt
+            afft = np.fft.fft(apad, axis=0)
+            ap = np.abs(afft).mean(axis=(1, 2))
+            ap = np.fft.fftshift(ap)
+            range_time_list.append(rp)
+            dop_time_list.append(dp)
+            az_time_list.append(ap)
+        range_t = np.stack(range_time_list, axis=0).T.astype(np.float32)  # (256, N)
+        dop_t   = np.stack(dop_time_list,   axis=0).T.astype(np.float32)  # (128, N)
+        az_t    = np.stack(az_time_list,    axis=0).T.astype(np.float32)  # (128, N)
+        np.savez(os.path.join(output_dir, "mmexpert_views.npz"),
+                 range_time=range_t, doppler_time=dop_t, azimuth_time=az_t)
+        # Also save the conventional <name>.npz directly in the sample dir so it can be
+        # consumed with minimal extra steps by mmExpert (filefolder=.../<name>, fileindex=<name>)
+        sample_name = os.path.basename(output_dir)
+        np.savez(os.path.join(output_dir, f"{sample_name}.npz"),
+                 range_time=range_t, doppler_time=dop_t, azimuth_time=az_t)
+        print(f"Saved mmExpert views to mmexpert_views.npz and {sample_name}.npz (shapes {range_t.shape})")
+    except Exception as e:
+        print(f"[mmExpert export] Skipped (could not compute views): {e}")
     
     # Write the video
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')

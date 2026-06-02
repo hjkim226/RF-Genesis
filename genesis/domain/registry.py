@@ -13,7 +13,7 @@ This enables the "modular adapter" contribution in the SMAL/SMIL spec.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -31,7 +31,7 @@ class BodyDomain:
     name: str                    # canonical key: "smpl", "smil", "dog", "cat"
     display_name: str
     pose_dim: int                # axis-angle params (72 for SMPL/SMIL, 99 for SMAL)
-    shape_dim: int               # beta count (10 SMPL, 20 SMIL, ~4-9 for SMAL clusters)
+    shape_dim: int               # beta count (10 SMPL, 20 SMIL, 41 for bundled SMAL clusters)
     is_quadruped: bool = False
     is_infant: bool = False
     default_gender: str = "male"
@@ -99,7 +99,7 @@ BODY_DOMAINS: Dict[str, BodyDomain] = {
         name="dog",
         display_name="Dog (SMAL canidae)",
         pose_dim=99,
-        shape_dim=4,                      # cluster mean dim (actual shapedirs may be higher)
+        shape_dim=41,
         is_quadruped=True,
         is_infant=False,
         default_gender="neutral",
@@ -114,7 +114,7 @@ BODY_DOMAINS: Dict[str, BodyDomain] = {
         name="cat",
         display_name="Cat (SMAL felidae)",
         pose_dim=99,
-        shape_dim=4,
+        shape_dim=41,
         is_quadruped=True,
         is_infant=False,
         default_gender="neutral",
@@ -166,7 +166,7 @@ def get_smal_cluster_index(body_model: str) -> int:
 def resolve_smal_data_path() -> Path:
     """Centralized resolver (previously duplicated in object_diff.py and smpl.py)."""
     # Default matches existing RF-Genesis layout
-    default_root = Path(__file__).resolve().parents[3] / "models" / "smpl_models"
+    default_root = Path(__file__).resolve().parents[2] / "models" / "smpl_models"
     root = Path(os.environ.get("SMAL_MODEL_ROOT", default_root))
     return Path(os.environ.get("SMAL_DATA_PATH", root / "smal_CVPR2017_data.pkl"))
 

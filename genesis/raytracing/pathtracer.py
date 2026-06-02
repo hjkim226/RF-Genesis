@@ -87,8 +87,10 @@ class RayTracer:
         distance = np.array(t).reshape(self.PIR_resolution, self.PIR_resolution)
         intensity = np.array(intensity)[:, :, 0]
 
-        # Phase 2: Compute approximate radial velocity from point cloud motion
-        pointcloud = np.array(si.p)
+        # Phase 2: Compute approximate radial velocity from point cloud motion.
+        # Mitsuba returns one intersection point per film sample; normalize to an
+        # image-shaped array so the PIR mask and auxiliary point cloud stay aligned.
+        pointcloud = np.array(si.p).reshape(self.PIR_resolution, self.PIR_resolution, 3)
         velocity = np.zeros((self.PIR_resolution, self.PIR_resolution), dtype=np.float32)
 
         if self._prev_pointcloud is not None and pointcloud.shape == self._prev_pointcloud.shape:
@@ -99,13 +101,6 @@ class RayTracer:
             velocity = radial_vel.astype(np.float32)
 
         self._prev_pointcloud = pointcloud.copy()
-
-        # Apply domain RCS scaling to intensity (stronger for animals, weaker for infants)
-        try:
-            rcs_scale = get_radar_domain_config(self.body_model).rcs_scale
-            intensity = intensity * rcs_scale
-        except Exception:
-            pass
 
         PIR = np.stack([distance, intensity, velocity], axis=2)
         return PIR, pointcloud

@@ -142,7 +142,7 @@ def make_comparison_figure(base_pose, base_trans, retargeted_pose, retargeted_tr
     ax1.view_init(elev=18, azim=-55)
 
     # After (retargeted + micro-motions)
-    plot_skeleton(ax2, retargeted_pose[mid], body_model=body_model, color="#d62728", label="Retargeted + micro")
+    plot_skeleton(ax2, retargeted_pose[mid], body_model=body_model, color="#d62728")
     ax2.set_title(f"After domain retargeting + micro-motions\n{body_model.upper()} — {title_suffix}", fontsize=12)
     ax2.set_xlim(-1.2, 1.2)
     ax2.set_ylim(-0.3, 1.8)

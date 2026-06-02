@@ -31,23 +31,14 @@ class RadarDomainConfig:
     """Runtime radar simulation parameters for one body domain."""
 
     body_model: str
-
-    # RCS / amplitude scaling applied to returned intensity
-    rcs_scale: float                    # >1.0 for strong animal returns, <1.0 for infants
-
-    # Micro-Doppler / velocity modulation
-    micro_doppler_amp: float            # peak radial velocity contribution (m/s)
-    breathing_freq_hz: float = 0.35
-    tail_wag_freq_hz: float = 2.4
-
-    # Material proxy (used to tint Mitsuba diffuse BSDF reflectance)
-    # Simulates higher permittivity / absorption for fur vs skin/clothing
+    rcs_scale: float
+    micro_doppler_amp: float
     reflectance_tint: Tuple[float, float, float]
 
-    # Point sampling / ray density hint (future use in interpolator subsampling)
+    # Fields with defaults must come after non-default fields
+    breathing_freq_hz: float = 0.35
+    tail_wag_freq_hz: float = 2.4
     point_density_scale: float = 1.0
-
-    # Additional noise / diffusion for infants (makes returns "softer")
     diffuse_noise_scale: float = 0.0
 
 

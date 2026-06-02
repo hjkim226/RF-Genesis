@@ -105,3 +105,28 @@ def evaluate_pointcloud_pair(real_pc: np.ndarray, synth_pc: np.ndarray) -> dict:
         "hausdorff_m": hausdorff_distance(real_pc, synth_pc),
         "doppler_hist_l1": doppler_histogram_error(real_pc, synth_pc),
     }
+
+
+# ------------------------------------------------------------------
+# Downstream task metrics (added in Phase 3)
+# ------------------------------------------------------------------
+
+def accuracy(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """Classification accuracy."""
+    return (pred.argmax(dim=-1) == target).float().mean().item()
+
+
+def mpjpe(pred_joints: torch.Tensor, gt_joints: torch.Tensor, root_aligned: bool = True) -> float:
+    """
+    Mean Per Joint Position Error (in meters).
+    Assumes pred/gt are (B, J, 3) or (B, 3*J).
+    """
+    if pred_joints.dim() == 2:
+        pred_joints = pred_joints.view(pred_joints.shape[0], -1, 3)
+        gt_joints = gt_joints.view(gt_joints.shape[0], -1, 3)
+
+    if root_aligned:
+        pred_joints = pred_joints - pred_joints[:, 0:1, :]
+        gt_joints = gt_joints - gt_joints[:, 0:1, :]
+
+    return (pred_joints - gt_joints).norm(dim=-1).mean().item()
