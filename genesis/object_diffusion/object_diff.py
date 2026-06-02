@@ -18,38 +18,48 @@ from visualize.vis_utils import joints2smpl,npy2obj
 from model.rotation2xyz import Rotation2xyz
 import utils.rotation_conversions as geometry
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SMAL_ROOT = REPO_ROOT / "models" / "smpl_models"
-SMAL_BODY_MODELS = {"cat": 0, "dog": 1}
+# Domain registry (single source of truth for body model metadata)
+from genesis.domain.registry import (
+    BODY_DOMAINS,
+    SMAL_BODY_MODELS,
+    get_domain,
+    get_pose_dim,
+    default_shape_for,
+    resolve_smal_data_path,
+    load_smal_cluster_betas,
+    get_micro_motion_profile,
+)
 
+# New domain retargeting + micro-motion (Phase 1)
+from genesis.retargeting import (
+    retarget_to_smal_quadruped,
+    retarget_to_smil_infant,
+    inject_micro_motions,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ------------------------------------------------------------------
+# Thin wrappers around the domain registry (source of truth lives in
+# genesis/domain/registry.py). Old names preserved for minimal diff.
+# ------------------------------------------------------------------
 
 def _resolve_smal_data_path():
-    smal_root = Path(os.environ.get("SMAL_MODEL_ROOT", DEFAULT_SMAL_ROOT))
-    return Path(os.environ.get("SMAL_DATA_PATH", smal_root / "smal_CVPR2017_data.pkl"))
+    return resolve_smal_data_path()
 
 
 def _smal_cluster_betas(body_model):
-    data_path = _resolve_smal_data_path()
-    with open(data_path, "rb") as fp:
-        data = pickle.load(fp, encoding="latin1")
-    return np.asarray(data["cluster_means"][SMAL_BODY_MODELS[body_model]], dtype=np.float32)
+    return load_smal_cluster_betas(body_model)
 
 
 def _pose_param_count_for(body_model):
-    if body_model in ("smpl", "smil"):
-        return 72
-    if body_model in SMAL_BODY_MODELS:
-        return 99
-    raise ValueError("body_model must be 'smpl', 'smil', 'dog', or 'cat'")
+    return get_pose_dim(body_model)
 
 
 def _shape_params_for(body_model):
-    if body_model in SMAL_BODY_MODELS:
-        return _smal_cluster_betas(body_model)
-    if body_model in ("smpl", "smil"):
-        shape_param_count = 20 if body_model == "smil" else 10
-        return np.zeros(shape_param_count)
-    raise ValueError("body_model must be 'smpl', 'smil', 'dog', or 'cat'")
+    # For SMAL this returns the cluster mean (not zeros). For others zeros.
+    return default_shape_for(body_model)
 
 
 def _retarget_pose_for(body_model, pose, num_frames):
@@ -60,7 +70,7 @@ def _retarget_pose_for(body_model, pose, num_frames):
     return np.zeros((num_frames, pose_param_count), dtype=np.float32)
 
 
-def save_body_motion(out_dir, pose, root_translation, body_model="smpl", gender="male"):
+def save_body_motion(out_dir, pose, root_translation, body_model="smpl", gender="male", skip_micro_motions=False):
     np.savez(
         out_dir + '/obj_diff.npz',
         pose=pose,
@@ -68,15 +78,16 @@ def save_body_motion(out_dir, pose, root_translation, body_model="smpl", gender=
         root_translation=root_translation,
         gender=gender,
         body_model=body_model,
+        skip_micro_motions=skip_micro_motions,
     )
 
 
-def retarget_body_model(out_dir, body_model="smpl", gender=None):
+def retarget_body_model(out_dir, body_model="smpl", gender=None, skip_micro_motions=False):
     data = np.load(out_dir + '/obj_diff.npz', allow_pickle=True)
     gender = gender or (str(data['gender']) if 'gender' in data else 'male')
     root_translation = data['root_translation']
     pose = _retarget_pose_for(body_model, data['pose'], len(root_translation))
-    save_body_motion(out_dir, pose, root_translation, body_model, gender)
+    save_body_motion(out_dir, pose, root_translation, body_model, gender, skip_micro_motions=skip_micro_motions)
 
 
 def euler_to_axis_angle(euler_angles):
@@ -92,7 +103,7 @@ def euler_to_axis_angle(euler_angles):
 
     return axis_angle_params
 
-def process(out_dir, body_model="smpl", gender="male"):
+def process(out_dir, body_model="smpl", gender="male", skip_micro_motions=False):
     filename = out_dir+"/obj_diff_raw.npy"
     print(colored("---[RFGen.ObjDiff]:Runing SMPLify, it may take a few minutes.---", 'yellow'))
     print(colored("---[RFGen.ObjDiff]:This may be optimized in future updates.---", 'yellow'))
@@ -124,11 +135,38 @@ def process(out_dir, body_model="smpl", gender="male"):
     if body_model in SMAL_BODY_MODELS:
         smpl_params = np.zeros((num_frames, _pose_param_count_for(body_model)), dtype=np.float32)
     
-    save_body_motion(out_dir, smpl_params, root_translation, body_model, gender=gender)
+    # ------------------------------------------------------------------
+    # Phase 1 hybrid retargeting (user-selected strategy)
+    # If we have a non-human body_model and the user did not disable
+    # micro-motions, run the domain-specific retarget + gait injection.
+    # This turns the (mostly zero or human) pose into a plausible
+    # quadruped trot or infant supine motion before saving.
+    # ------------------------------------------------------------------
+    if not skip_micro_motions:
+        domain = get_domain(body_model)
+        if domain.is_quadruped:
+            smpl_params, root_translation = retarget_to_smal_quadruped(
+                smpl_params, root_translation, body_model=body_model
+            )
+        elif domain.is_infant:
+            smpl_params, root_translation = retarget_to_smil_infant(
+                smpl_params, root_translation
+            )
+
+        # Apply profile-driven micro-motions (tail wag, breathing, fidget)
+        profile = get_micro_motion_profile(body_model)
+        if profile != "none":
+            for i in range(num_frames):
+                smpl_params[i] = inject_micro_motions(
+                    smpl_params[i], t=i / 30.0, body_model=body_model, profile=profile
+                )
+
+    save_body_motion(out_dir, smpl_params, root_translation, body_model, gender=gender,
+                     skip_micro_motions=skip_micro_motions)
     
 
 
-def generate(prompt, out_dir, body_model="smpl", gender="male"):
+def generate(prompt, out_dir, body_model="smpl", gender="male", skip_micro_motions=False):
 
     os.chdir("ext/mdm/")
     subprocess.run(
@@ -137,5 +175,5 @@ def generate(prompt, out_dir, body_model="smpl", gender="male"):
          '--output_dir', "../../"+out_dir, 
          '--num_samples', '1', '--num_repetitions', '1'])
     os.chdir("../..")
-    process(out_dir, body_model=body_model, gender=gender)
+    process(out_dir, body_model=body_model, gender=gender, skip_micro_motions=skip_micro_motions)
     

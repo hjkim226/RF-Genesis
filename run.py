@@ -24,8 +24,11 @@ def get_args():
                         help='Disable visualization step (default: enabled)')
     parser.add_argument('--no-environment',  dest='skip_environment', action='store_true', default=False,
                         help='Disable environment PIR generation (default: enabled)')
+    parser.add_argument('--no-micro-motions', dest='skip_micro_motions', action='store_true', default=False,
+                        help='Disable domain-specific micro-motion injection (tail wag, breathing, fidget) for SMAL/SMIL (default: enabled when supported)')
     parser.add_argument('--body-model', choices=['smpl', 'smil', 'dog', 'cat'], default='smpl',
-                        help='Body mesh model to render: adult SMPL, infant SMIL, or SMAL dog/cat (default: smpl)')
+                        help='Body mesh model to render: adult SMPL, infant SMIL, or SMAL dog/cat (default: smpl). '
+                             'See genesis/domain/registry.py for per-domain RCS, gait, and micro-motion profiles.')
     parser.add_argument('--gender', choices=['male', 'female'], default='male',
                         help='SMPL gender to render when using --body-model smpl (default: male)')
 
@@ -34,11 +37,11 @@ def get_args():
     if not args.skip_environment and args.env_prompt is None:
         parser.error('Please provide -e/--env-prompt, or pass --no-environment to skip environment PIR generation.')
 
-    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model, args.gender
+    return args.obj_prompt, args.env_prompt, args.name, args.skip_visualize, args.skip_environment, args.body_model, args.gender, args.skip_micro_motions
 
 
 def main():
-    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model, gender = get_args()
+    obj_prompt, env_prompt, name, skip_visualize, skip_environment, body_model, gender, skip_micro_motions = get_args()
     # obj_prompt, env_prompt, name = "a person walking back and forth", "", "test"
 
     
@@ -61,10 +64,12 @@ def main():
 
     if regenerate_body:
         print(colored('[RFGen] Step 1/4: Generating the human body motion: ', 'green'))
-        object_diff.generate(obj_prompt, output_dir, body_model=body_model, gender=gender)
+        object_diff.generate(obj_prompt, output_dir, body_model=body_model, gender=gender,
+                             skip_micro_motions=skip_micro_motions)
     elif retarget_body:
         print(colored('[RFGen] Step 1/4: Retargeting existing body motion to {} {}: '.format(gender, body_model.upper()), 'green'))
-        object_diff.retarget_body_model(output_dir, body_model=body_model, gender=gender)
+        object_diff.retarget_body_model(output_dir, body_model=body_model, gender=gender,
+                                        skip_micro_motions=skip_micro_motions)
     else:
         print(colored('[RFGen] Step 1/4: Already done, existing body motion file, skiping this step.', 'green'))
 
@@ -84,7 +89,11 @@ def main():
 
 
     print(colored('[RFGen] Step 4/4: Generating the radar signal.', 'green'))
-    radar_frames = signal_generator.generate_signal_frames(body_pir, body_aux, env_pir, radar_config="models/IWR6843AOP_config.json")
+    radar_frames = signal_generator.generate_signal_frames(
+        body_pir, body_aux, env_pir,
+        radar_config="models/IWR6843AOP_config.json",
+        body_model=body_model
+    )
 
     print(colored('[RFGen] Saving the radar bin file. Shape {}'.format(radar_frames.shape), 'green'))
     np.save(os.path.join(output_dir, 'radar_frames.npy'), radar_frames)

@@ -18,7 +18,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SMPL_ROOT = REPO_ROOT / "models" / "smpl_models"
 DEFAULT_SMIL_MODEL = DEFAULT_SMPL_ROOT / "smil_web.pkl"
 DEFAULT_SMAL_ROOT = DEFAULT_SMPL_ROOT
-SMAL_BODY_MODELS = {"cat": 0, "dog": 1}
+
+# Domain registry (single source of truth; SMAL_BODY_MODELS kept for backward compat in this file)
+from genesis.domain.registry import (
+    BODY_DOMAINS,
+    SMAL_BODY_MODELS,
+    get_domain,
+    resolve_smal_data_path as _resolve_smal_data_path,
+    load_smal_cluster_betas as _load_smal_cluster_betas,
+)
 
 
 def _install_chumpy_pickle_stubs():
@@ -105,14 +113,11 @@ def _resolve_smal_model():
 
 
 def _resolve_smal_data():
-    smal_root = _resolve_smal_root()
-    return Path(os.environ.get("SMAL_DATA_PATH", smal_root / "smal_CVPR2017_data.pkl"))
+    return _resolve_smal_data_path()
 
 
 def _load_smal_shape(body_model):
-    with open(_resolve_smal_data(), "rb") as fp:
-        data = pickle.load(fp, encoding="latin1")
-    return np.asarray(data["cluster_means"][SMAL_BODY_MODELS[body_model]], dtype=np.float32)
+    return _load_smal_cluster_betas(body_model)
 
 
 def _write_ply(filename, vertices, faces):
